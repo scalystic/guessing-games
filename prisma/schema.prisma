@@ -52,6 +52,8 @@ model Player {
   /// this is the single join point into the game domain.
   authUserId String? @unique
   email      String? @unique
+  /// Bcrypt hash. Null for guests and OAuth-only users.
+  passwordHash String?
 
   xp    Int @default(0)
   level Int @default(1)
