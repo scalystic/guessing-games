@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useActionState } from "react";
 import { login } from "@/lib/auth/actions";
+import GoogleButton from "@/app/components/auth/google-button";
 
 export default function LoginForm() {
   const [state, action, pending] = useActionState(login, undefined);
@@ -23,6 +24,19 @@ export default function LoginForm() {
           {state.message}
         </div>
       )}
+
+      <GoogleButton />
+
+      <div className="relative my-2">
+        <div className="absolute inset-0 flex items-center">
+          <div className="w-full border-t border-zinc-200 dark:border-zinc-800" />
+        </div>
+        <div className="relative flex justify-center text-sm">
+          <span className="bg-white px-2 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+            Or continue with email
+          </span>
+        </div>
+      </div>
 
       {/* Email */}
       <div className="flex flex-col gap-2">

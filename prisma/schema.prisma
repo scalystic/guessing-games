@@ -54,6 +54,8 @@ model Player {
   email      String? @unique
   /// Bcrypt hash. Null for guests and OAuth-only users.
   passwordHash String?
+  /// Google OAuth Subject ID
+  googleId   String? @unique
 
   xp    Int @default(0)
   level Int @default(1)
