@@ -7,9 +7,10 @@
 //      live in a 1:1 detail table keyed by puzzleId (see Song).
 //   3. Reveal stages are a shared concept — audio clips, blurred frames, and
 //      text snippets all fit PuzzleAsset.
-//   4. Difficulty is a property of the catalog, never of the ladder. Every tier
-//      shares maxAttempts / revealLadder / answer format.
-//   5. Ladder + tier curves are DATA (tunable without deploy). The scoring
+//   4. Difficulty is a property of the catalog, never of the ladder. It ramps
+//      WITHIN a run (popularity slides down round to round); there are no
+//      difficulty tiers to pick between.
+//   5. Ladder + popularity curve are DATA (tunable without deploy). The scoring
 //      formula is CODE, pinned per-run via scoringVersion so old runs stay
 //      explainable after a rebalance.
 
@@ -98,12 +99,6 @@ model GuestClaim {
 // Game registry
 // ============================================================
 
-enum DifficultyTier {
-  EASY
-  MEDIUM
-  HARD
-}
-
 /// One row per game (songless, framed, …). Engine shape lives here so a new
 /// game is configuration, not a fork of the run loop.
 model Game {
@@ -113,15 +108,24 @@ model Game {
   tagline  String?
   isActive Boolean @default(false)
 
-  /// Attempts per puzzle. Same for every tier — difficulty comes from catalog.
+  /// Attempts per puzzle. Fixed — difficulty comes from the catalog.
   maxAttempts Int @default(6)
   livesPerRun Int @default(3)
-  /// Rounds in a daily run. Null-safe default matches the 20-song design.
-  dailyRounds Int @default(20)
+  /// Rounds in a daily run. Default matches the 10-song design.
+  dailyRounds Int @default(10)
 
   /// Cumulative reveal ladder in ms: [200, 700, 1200, 2200, 4000, 7000].
   /// Length must equal maxAttempts. Validated at ingest, not by the DB.
   revealLadder Json
+
+  /// The difficulty curve, as data. Round 1 targets startPopularity; each later
+  /// round subtracts rampPerRound, floored at minPopularity so a deep run can't
+  /// fall off the edge of the catalog. Sampling picks anywhere within
+  /// ±sampleWindow of that target.
+  startPopularity Int   @default(90)
+  rampPerRound    Float @default(3.5)
+  minPopularity   Int   @default(20)
+  sampleWindow    Int   @default(5)
 
   /// Pins which scoring implementation new runs use.
   scoringVersion Int @default(1)
@@ -134,43 +138,11 @@ model Game {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  tiers              GameTier[]
   puzzles            Puzzle[]
   runs               Run[]
   dailyChallenges    DailyChallenge[]
   playerStats        PlayerGameStat[]
   leaderboardEntries LeaderboardEntry[]
-}
-
-/// The difficulty curve, as data. A tier sets where the catalog window STARTS
-/// and how fast it slides toward obscurity — not the ladder or attempt count.
-model GameTier {
-  id     String         @id @default(cuid())
-  gameId String
-  tier   DifficultyTier
-
-  /// Popularity percentile the first round targets (0-100).
-  startPopularity Int
-  /// Percentile subtracted per round. EASY 1.5 / MEDIUM 2.0 / HARD 2.5.
-  rampPerRound    Float
-  /// Floor so deep runs don't fall off the edge of the catalog.
-  minPopularity   Int   @default(2)
-  /// Sample anywhere within ±window of the target percentile.
-  sampleWindow    Int   @default(4)
-
-  /// Feeds XP and per-tier score. Boards are per-tier, so this never makes
-  /// two players on one board incomparable.
-  scoreMultiplier Float @default(1.0)
-
-  /// Soft gate. Level 1 = open to everyone.
-  unlockAtLevel Int     @default(1)
-  /// Give locked tiers a free taste — best conversion lever there is.
-  trialRuns     Int     @default(1)
-  isActive      Boolean @default(true)
-
-  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
-
-  @@unique([gameId, tier])
 }
 
 // ============================================================
@@ -187,8 +159,6 @@ model Puzzle {
   popularity     Int
   /// The original external signal, kept so retuning is auditable/reversible.
   seedPopularity Int
-  /// Cached bucket for fast sampling. Null until the song has enough plays.
-  difficultyTier DifficultyTier?
 
   playCount       Int    @default(0)
   solveCount      Int    @default(0)
@@ -219,7 +189,6 @@ model Puzzle {
 
   /// The sampling index: active puzzles for a game ordered by popularity.
   @@index([gameId, isActive, isBlocked, popularity])
-  @@index([gameId, difficultyTier])
   @@unique([gameId, ingestSource, ingestRef])
 }
 
@@ -265,8 +234,8 @@ model Song {
   genres      String[]
 
   durationMs Int?
-  /// Where the reveal ladder starts. 0 = track start; set past the intro for
-  /// EASY, or a random offset for the hardest tiers.
+  /// Where the reveal ladder starts. 0 = track start; set past the intro so
+  /// stage 1 lands on the hook rather than silence.
   hookStartMs Int  @default(0)
 
   isrc       String?
@@ -287,17 +256,18 @@ model Song {
 // Daily challenge
 // ============================================================
 
-/// Precomputed and frozen: everyone on a tier gets the identical ordered set.
-/// Storing the list explicitly (rather than deriving from the seed at read
+/// Precomputed and frozen: every player gets the identical ordered set for the
+/// day. Storing the list explicitly (rather than deriving from the seed at read
 /// time) means later catalog changes can never shift a published day.
 model DailyChallenge {
-  id     String         @id @default(cuid())
+  id     String @id @default(cuid())
   gameId String
-  tier   DifficultyTier
 
   /// Calendar day in the platform's fixed daily timezone. "2026-08-19".
-  dayKey     String
-  seed       String
+  dayKey String
+  seed   String
+  /// Frozen copy of Game.dailyRounds — 10 today, and retuning it later must not
+  /// change how many rounds an already-published day has.
   roundCount Int
 
   publishedAt DateTime?
@@ -307,8 +277,7 @@ model DailyChallenge {
   entries DailyChallengePuzzle[]
   runs    Run[]
 
-  @@unique([gameId, tier, dayKey])
-  @@index([gameId, dayKey])
+  @@unique([gameId, dayKey])
 }
 
 model DailyChallengePuzzle {
@@ -350,7 +319,6 @@ model Run {
   playerId String
 
   mode RunMode
-  tier DifficultyTier
 
   /// Set ONLY for DAILY. Postgres treats NULLs as distinct in unique indexes,
   /// so the composite unique below enforces one daily per player per day while
@@ -405,13 +373,13 @@ model Run {
   hints          HintUsage[]
   ledger         LedgerEntry[]
 
-  /// One daily per player/game/tier/day. Practice + endless unaffected (NULL).
-  @@unique([playerId, gameId, tier, dayKey])
-  @@index([gameId, mode, tier, status])
+  /// One daily per player/game/day. Practice + endless unaffected (NULL).
+  @@unique([playerId, gameId, dayKey])
+  @@index([gameId, mode, status])
   @@index([playerId, startedAt])
   @@index([status, expiresAt])
-  /// Board reads: top ranked scores for a game+tier.
-  @@index([gameId, tier, isRanked, score])
+  /// Board reads: top ranked scores for a game.
+  @@index([gameId, isRanked, score])
 }
 
 enum RoundOutcome {
@@ -489,7 +457,7 @@ model Guess {
 // ============================================================
 
 /// Hints add SIDE INFORMATION only. None of them extend the reveal ladder or
-/// grant extra attempts — that keeps every tier's ladder identical.
+/// grant extra attempts — every player's ladder stays identical.
 enum HintType {
   DECADE
   GENRE
@@ -552,13 +520,12 @@ model LedgerEntry {
 // Stats & leaderboards
 // ============================================================
 
-/// Rollup so profile and streak reads never scan the run table.
-/// tier = null means "across all tiers".
+/// Rollup so profile and streak reads never scan the run table. One row per
+/// player per game.
 model PlayerGameStat {
   id       String @id @default(cuid())
   playerId String
   gameId   String
-  tier     DifficultyTier?
 
   runsPlayed   Int @default(0)
   roundsPlayed Int @default(0)
@@ -581,8 +548,8 @@ model PlayerGameStat {
   player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
   game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
 
-  @@unique([playerId, gameId, tier])
-  @@index([gameId, tier, bestRunScore])
+  @@unique([playerId, gameId])
+  @@index([gameId, bestRunScore])
 }
 
 /// Prevents repeats across runs. Rows expire per Game.puzzleCooldownDays.
@@ -617,7 +584,6 @@ model LeaderboardEntry {
   id        String    @id @default(cuid())
   gameId    String
   boardType BoardType
-  tier      DifficultyTier?
   periodKey String
 
   playerId String
@@ -637,7 +603,7 @@ model LeaderboardEntry {
   player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
   /// A player holds exactly one row per board per period.
-  @@unique([gameId, boardType, tier, periodKey, playerId])
+  @@unique([gameId, boardType, periodKey, playerId])
   /// The board read: ORDER BY score DESC, tieBreakRevealMs ASC.
-  @@index([gameId, boardType, tier, periodKey, score])
+  @@index([gameId, boardType, periodKey, score])
 }

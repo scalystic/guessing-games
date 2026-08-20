@@ -11,13 +11,14 @@ every game and every mode; a game is configuration, a mode is a flag on `Run`.
 | **Reveal stage** | How much of the puzzle is unlocked. Stage 1 = 0.2s, stage 6 = 7s. Cumulative. |
 | **Attempt** | A guess or a skip. Both advance the stage. 6 per puzzle. |
 | **Round** | One puzzle inside a run. |
-| **Run** | One sitting. Daily = 20 rounds, 3 lives. Practice/endless = unbounded, 3 lives. |
-| **Tier** | Easy / Medium / Hard. Changes *which songs*, never the ladder. |
+| **Run** | One sitting. Daily = 10 rounds, 3 lives. Practice/endless = unbounded, 3 lives. |
 
-The ladder, attempt count, and answer format are **identical across all tiers**.
-Difficulty comes from two places only: which slice of the catalog is sampled
-(`GameTier.startPopularity` + `rampPerRound`), and where in the track the clip
-starts (`Song.hookStartMs`).
+**There are no difficulty tiers.** One daily challenge, ten songs, same set for
+everyone — nothing to pick before you play. The ladder, attempt count, and answer
+format are identical for every player and every round; difficulty ramps *within*
+a run and comes from two places only: which slice of the catalog is sampled
+(`Game.startPopularity` + `rampPerRound`), and where in the track the clip starts
+(`Song.hookStartMs`).
 
 ## Run lifecycle
 
@@ -57,7 +58,7 @@ Every row is one server transaction over a row-locked `Run`.
 
 | Action | Guard | Effect |
 | --- | --- | --- |
-| `startRun` | tier unlocked for player level; for `DAILY`, no existing run for `(player, game, tier, dayKey)` | create `Run`, create round 1, return stage-1 asset URL + run token |
+| `startRun` | for `DAILY`, no existing run for `(player, game, dayKey)` | create `Run`, create round 1, return stage-1 asset URL + run token |
 | `guess` (correct) | run `IN_PROGRESS`, round `PENDING`, `attemptsUsed < maxAttempts`, idempotency key unused | round → `SOLVED`, award points/XP, `currentStreak++`, advance cursor or finalize |
 | `guess` (wrong) | same | `attemptsUsed++`; if `< maxAttempts` → `stageReached++`, return next asset; else round → `FAILED` |
 | `skip` | same | identical to a wrong guess, recorded with `isSkip = true` |
@@ -98,13 +99,13 @@ Next 16 route handlers. `params` is a Promise and `cookies()` / `headers()` are
 async — see `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/route.md`.
 
 ```
-POST   /api/runs                      → start a run   { gameSlug, mode, tier }
+POST   /api/runs                      → start a run   { gameSlug, mode }
 GET    /api/runs/[runId]              → resume: current round, stage, asset URL
 POST   /api/runs/[runId]/guess        → { guessedPuzzleId, idempotencyKey }
 POST   /api/runs/[runId]/skip         → { idempotencyKey }
 POST   /api/runs/[runId]/abandon
 GET    /api/games/[slug]/search       → typeahead over the catalog
-GET    /api/games/[slug]/leaderboard  → ?board=DAILY&tier=EASY&period=2026-08-19
+GET    /api/games/[slug]/leaderboard  → ?board=DAILY&period=2026-08-19
 POST   /api/players/claim             → guest → user merge
 ```
 
@@ -140,13 +141,18 @@ Formula lives in code (`src/lib/game/scoring/v1.ts`), pinned per run by
 
 ```
 stageBase   = [1000, 800, 600, 400, 250, 100][stageReached - 1]
-tierMult    = GameTier.scoreMultiplier          // 1.0 / 1.4 / 1.9
-depthBonus  = 1 + 0.03 * (roundIndex - 1)
+depthBonus  = 1 + 0.05 * (roundIndex - 1)           // round 10 is worth 1.45x
 streakBonus = 1 + min(0.10 * currentStreak, 0.50)   // first-stage solves only
 
-points = round(stageBase * tierMult * depthBonus * streakBonus)
-xp     = round((10 + 4 * (maxAttempts - attemptsUsed)) * tierMult)
+points = round(stageBase * depthBonus * streakBonus)
+xp     = 10 + 4 * (maxAttempts - attemptsUsed)
 ```
+
+With tiers gone there is no score multiplier — every score on the board came from
+the same ten songs, which is the whole reason the board is comparable. `depthBonus`
+carries the difficulty reward instead: the later rounds are the obscure ones, so
+they pay more. It's steeper than it would be for a 20-round day (0.05 vs 0.03) so
+that reaching round 10 still feels worth more than a clean start.
 
 A failed round scores 0 points and 0 XP. XP is deliberately flatter than score —
 score is spiky and competitive, XP should feel like steady progress. They are
@@ -156,13 +162,18 @@ separate columns; never derive one from the other at read time.
 
 ```
 targetPopularity = clamp(
-  tier.startPopularity - tier.rampPerRound * (roundIndex - 1),
-  tier.minPopularity,
+  game.startPopularity - game.rampPerRound * (roundIndex - 1),
+  game.minPopularity,
   100
 )
 ```
 
-Sample one active, unblocked puzzle within `±tier.sampleWindow` of the target,
+Seeded at `90 / -3.5 / floor 20`, a 10-round day walks 90 → 58.5: round 1 is a
+song almost everyone knows, round 10 is genuinely obscure. Ten rounds have to
+cover the same span that twenty used to, so the ramp is steep — retune
+`rampPerRound` here, not in code.
+
+Sample one active, unblocked puzzle within `±game.sampleWindow` of the target,
 excluding:
 
 - puzzles already in this run (`@@unique([runId, puzzleId])` is the hard stop)
@@ -192,11 +203,13 @@ stays untouched so any retune is reversible.
 - `dayKey` is a calendar date in one fixed platform timezone (`DAILY_TZ`, e.g.
   `Asia/Kolkata`). Pick it once and never make it per-user — a per-user day means
   no two players share a puzzle set, which defeats the entire point.
-- A cron job generates tomorrow's `DailyChallenge` per tier and freezes the
-  ordered puzzle list. Generate at least a day ahead so a failed job is
-  recoverable before anyone notices.
+- A cron job generates tomorrow's single `DailyChallenge` — one row per game per
+  day, holding 10 frozen `DailyChallengePuzzle` entries in order. Generate at
+  least a day ahead so a failed job is recoverable before anyone notices.
+- `roundCount` is copied from `Game.dailyRounds` at generation time. Changing the
+  game from 10 rounds to some other number must never reshape a published day.
 - One-per-day is enforced by the database, not by application logic:
-  `@@unique([playerId, gameId, tier, dayKey])` on `Run`. Because Postgres treats
+  `@@unique([playerId, gameId, dayKey])` on `Run`. Because Postgres treats
   `NULL`s as distinct in unique indexes, practice and endless runs — which leave
   `dayKey` null — are unaffected and unlimited. No partial index required.
 
@@ -233,16 +246,20 @@ for display — never treated as truth.
 
 ## v1 scope
 
-**Ship:** `DAILY` + `PRACTICE`, three tiers, today's board per tier, guest play,
+**Ship:** `DAILY` (10 songs) + `PRACTICE`, one board per day, guest play,
 server-authoritative rounds, cumulative clips on CDN, XP/level, share card.
 
 **Schema present but unwired:** `ENDLESS`, `HintUsage`, coins, streak freezes,
 weekly/all-time boards.
 
-**Enabling endless later** is a `GameTier` row plus flipping `mode` — the run
-loop, selection, scoring, and boards already handle unbounded runs
-(`maxRounds = null`). That's the whole reason to keep the engine mode-agnostic
-now, even though v1 only ships daily.
+**Enabling endless later** is just flipping `mode` — the run loop, selection,
+scoring, and boards already handle unbounded runs (`maxRounds = null`). That's the
+whole reason to keep the engine mode-agnostic now, even though v1 only ships
+daily.
+
+**If difficulty options ever come back**, they belong on `Run` as a named preset
+resolved to a popularity curve at start time, not as a `tier` column threaded
+through five tables and every board key. That threading is what got removed here.
 
 ## Prisma 7 setup notes
 
@@ -282,6 +299,6 @@ Two things the schema deliberately leaves to a raw migration:
   `Game.puzzleCooldownDays`, or partitioning if it grows.
 
 Verified against Prisma 7.9.1: schema validates, client generates, and the
-initial migration produces 17 tables with all three integrity constraints intact
-(`Run_playerId_gameId_tier_dayKey_key`, `Guess_roundId_attemptIndex_key`,
+migrations produce 16 tables with all three integrity constraints intact
+(`Run_playerId_gameId_dayKey_key`, `Guess_roundId_attemptIndex_key`,
 `RunRound_runId_puzzleId_key`).
