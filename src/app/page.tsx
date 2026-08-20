@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
-import { listActiveGames } from "@/lib/games";
+import { fetchGames } from "@/lib/api/games";
 import HomeView from "./home-view";
 
-// Game config changes rarely and only via seed/admin, so serve it prerendered
-// and refresh at most hourly rather than hitting Postgres on every visit.
-export const revalidate = 3600;
+// This page consumes /api/games over HTTP rather than querying Postgres
+// directly, so it cannot be prerendered — at build time there is no server
+// listening to answer the request. Caching moves down a layer instead: the
+// route handler holds `revalidate = 3600`, so the DB is still only read hourly.
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Guessing Games",
@@ -19,7 +21,7 @@ export const metadata: Metadata = {
 };
 
 export default async function Page() {
-  const games = await listActiveGames();
+  const games = await fetchGames();
 
   return <HomeView games={games} />;
 }
