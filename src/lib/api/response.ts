@@ -1,7 +1,16 @@
 /// One envelope for every route handler, so clients can branch on the presence
 /// of `data` vs `error` without special-casing per endpoint.
 export type ApiSuccess<T> = { data: T };
-export type ApiFailure = { error: { code: string; message: string } };
+export type ApiFailure = {
+  error: {
+    code: string;
+    message: string;
+    /// Per-field messages for a validation_error, keyed like
+    /// zod's flatten().fieldErrors — optional so every other call site is
+    /// unaffected.
+    fieldErrors?: Record<string, string[]>;
+  };
+};
 export type ApiResponse<T> = ApiSuccess<T> | ApiFailure;
 
 export function jsonOk<T>(data: T, init?: ResponseInit): Response {
@@ -12,10 +21,12 @@ export function jsonError(
   status: number,
   code: string,
   message: string,
+  fieldErrors?: Record<string, string[]>,
 ): Response {
-  return Response.json({ error: { code, message } } satisfies ApiFailure, {
-    status,
-  });
+  return Response.json(
+    { error: { code, message, fieldErrors } } satisfies ApiFailure,
+    { status },
+  );
 }
 
 export function notFoundJson(message: string): Response {

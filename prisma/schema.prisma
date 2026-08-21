@@ -54,6 +54,11 @@ model Player {
   email      String? @unique
   /// Bcrypt hash. Null for guests and OAuth-only users.
   passwordHash String?
+  /// Grants access to /admin/*. No signup flow mints this — only an existing
+  /// admin or scripts/create-admin.ts. Re-checked from the DB on every admin
+  /// request, never trusted from the session JWT alone, so revoking it takes
+  /// effect on the very next request.
+  isAdmin Boolean @default(false)
   /// Google OAuth Subject ID
   googleId   String? @unique
 

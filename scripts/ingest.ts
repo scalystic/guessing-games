@@ -40,10 +40,7 @@ import { PrismaPg } from '@prisma/adapter-pg'
 import { z } from 'zod'
 import { PrismaClient } from '../src/generated/prisma/client'
 import { isStorageConfigured, objectSize, putObject } from '../src/lib/storage'
-// Shared with the search endpoint on purpose: the index this writes and the
-// queries that read it have to normalise identically, and a second copy of the
-// transform drifts silently.
-import { buildSearchText } from '../src/lib/game/search-text'
+import { buildSearchText, computeDecade } from '../src/lib/catalog/search-text'
 import { computeLadderOffsets } from './lib/mp3'
 
 const run = promisify(execFile)
@@ -287,7 +284,7 @@ async function persist(
     artist: track.artist,
     album: track.album ?? null,
     releaseYear: track.releaseYear ?? null,
-    decade: track.releaseYear ? Math.floor(track.releaseYear / 10) * 10 : null,
+    decade: computeDecade(track.releaseYear),
     genres: track.genres,
     // The full track's length -- hint copy ("a 3:24 song from 1998") and a sanity
     // check on hookStartMs. Not the clip length; that lives on PuzzleAsset.

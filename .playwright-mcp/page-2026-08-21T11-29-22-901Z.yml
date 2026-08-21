@@ -1,0 +1,23 @@
+- generic [active] [ref=f10e1]:
+  - main [ref=f10e2]:
+    - generic [ref=f10e4]:
+      - generic [ref=f10e5]:
+        - generic [ref=f10e6]: G
+        - text: Guessing Games · Admin
+      - generic [ref=f10e8]:
+        - generic [ref=f10e9]:
+          - heading "Admin Console" [level=1] [ref=f10e10]
+          - paragraph [ref=f10e11]: Sign in to manage the song catalog and view player activity.
+        - generic [ref=f10e12]:
+          - generic [ref=f10e13]: Email
+          - textbox "Email" [ref=f10e14]:
+            - /placeholder: admin@example.com
+            - text: admin@test.local
+        - generic [ref=f10e15]:
+          - generic [ref=f10e16]: Password
+          - textbox "Password" [ref=f10e17]:
+            - /placeholder: Your password
+            - text: TestPass123
+        - button "Sign in" [ref=f10e18]
+  - button "Open Next.js Dev Tools" [ref=f10e24] [cursor=pointer]
+  - alert [ref=f10e28]
