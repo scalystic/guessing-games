@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import type { CurrentUser } from "@/lib/get-current-user";
 import { SONGS } from "@/data/songs";
+import { THEMES } from "@/data/themes";
+import { getServerThemeColor, getThemeColor, setThemeColor, subscribeThemeColor } from "@/lib/theme-color";
 import { useMelodleGame, MAX_ATTEMPTS } from "@/hooks/useMelodleGame";
 import { useNow } from "@/hooks/useNow";
 import { PlayerBar } from "@/components/PlayerBar";
@@ -30,17 +32,6 @@ import { LiveBackground } from "@/components/LiveBackground";
 // Signed-in accounts (kind === "USER") never hit this.
 const FREE_GUEST_ROUNDS = 5;
 
-// Jewel-tone palette pulled from film-poster & festival colors (marigold,
-// vermillion, peacock, gulaal, royal) rather than the violet/cyan gradient
-// that's become shorthand for "generated UI".
-const THEMES = [
-  { name: "Marigold", from: "#f6c453", to: "#c0392b", solid: "#f6c453" },
-  { name: "Sindoor", from: "#ff6b6b", to: "#f9ca24", solid: "#ff8577" },
-  { name: "Peacock", from: "#0f9b8e", to: "#f6c453", solid: "#2dd4bf" },
-  { name: "Gulaal", from: "#e84393", to: "#fdcb6e", solid: "#f472b6" },
-  { name: "Royal", from: "#2c3e91", to: "#f6c453", solid: "#f6c453" },
-];
-
 function HeaderIcon({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-1">
@@ -51,7 +42,7 @@ function HeaderIcon({ label, children }: { label: string; children: React.ReactN
 }
 
 export default function Home({ user }: { user: CurrentUser }) {
-  const [theme, setTheme] = useState(THEMES[0]);
+  const theme = useSyncExternalStore(subscribeThemeColor, getThemeColor, getServerThemeColor);
   const [showHelp, setShowHelp] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -78,7 +69,7 @@ export default function Home({ user }: { user: CurrentUser }) {
   function shuffleTheme() {
     const others = THEMES.filter((t) => t.name !== theme.name);
     const pick = others[Math.floor(Math.random() * others.length)] ?? THEMES[0];
-    setTheme(pick);
+    setThemeColor(pick);
   }
 
   function handleNavSelect(key: string) {
@@ -167,7 +158,7 @@ export default function Home({ user }: { user: CurrentUser }) {
               </button>
             </HeaderIcon>
             <HeaderIcon label="Profile">
-              <ProfileMenu accent={accent} themes={THEMES} activeTheme={theme} onThemeChange={setTheme} user={user} />
+              <ProfileMenu accent={accent} themes={THEMES} activeTheme={theme} onThemeChange={setThemeColor} user={user} />
             </HeaderIcon>
           </div>
         </header>
@@ -186,7 +177,7 @@ export default function Home({ user }: { user: CurrentUser }) {
         {/* Lives + streak — the state that matters while you're mid-round */}
         <div className="flex items-center justify-center gap-3">
           {/* <div
-            className="flex shrink-0 items-center gap-1 rounded-2xl border border-[#f6c453]/15 bg-(--surface) px-4 py-2.5"
+            className="flex shrink-0 items-center gap-1 rounded-2xl border border-[#cf9c4e]/15 bg-(--surface) px-4 py-2.5"
             aria-label={`${game.lives} of 3 lives left`}
           >
             {Array.from({ length: 3 }, (_, i) => (
@@ -196,7 +187,7 @@ export default function Home({ user }: { user: CurrentUser }) {
             ))}
             <span className="ml-1 text-sm font-semibold text-(--text)">Lives Left</span>
           </div> */}
-          <div className="flex shrink-0 items-center gap-1.5 rounded-2xl border border-[#f6c453]/15 bg-(--surface) px-4 py-2.5 text-sm font-semibold text-(--text)">
+          <div className="flex shrink-0 items-center gap-1.5 rounded-2xl border border-[#cf9c4e]/15 bg-(--surface) px-4 py-2.5 text-sm font-semibold text-(--text)">
             <span>🔥</span>
             Streak {game.streak}
           </div>
@@ -294,7 +285,7 @@ export default function Home({ user }: { user: CurrentUser }) {
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-(--text-faint)">
             Theme color
           </p>
-          <ThemeSwatchGrid themes={THEMES} active={theme} onChange={setTheme} onShuffle={shuffleTheme} />
+          <ThemeSwatchGrid themes={THEMES} active={theme} onChange={setThemeColor} onShuffle={shuffleTheme} />
           <p className="mt-4 flex items-center justify-between text-sm text-(--text-dim)">
             Appearance
             <ThemeModeToggle />

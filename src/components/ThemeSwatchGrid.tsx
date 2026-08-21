@@ -1,6 +1,7 @@
 "use client";
 
-export type GameTheme = { name: string; from: string; to: string; solid: string };
+export type { GameTheme } from "@/data/themes";
+import type { GameTheme } from "@/data/themes";
 
 type Props = {
   themes: GameTheme[];

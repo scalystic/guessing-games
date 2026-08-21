@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import type { CurrentUser } from "@/lib/get-current-user";
+import { logout } from "@/lib/auth/actions";
 import { ThemeSwatchGrid, type GameTheme } from "./ThemeSwatchGrid";
 import { ThemeModeToggle } from "./ThemeModeToggle";
 
@@ -25,6 +26,7 @@ function UserIcon() {
 
 export function ProfileMenu({ accent, themes, activeTheme, onThemeChange, user }: Props) {
   const [open, setOpen] = useState(false);
+  const [isLoggingOut, startLogout] = useTransition();
   const rootRef = useRef<HTMLDivElement>(null);
   const isGuest = !user || user.kind === "GUEST";
 
@@ -57,7 +59,7 @@ export function ProfileMenu({ accent, themes, activeTheme, onThemeChange, user }
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-20 mt-2 w-64 rounded-2xl border border-[#f6c453]/15 bg-(--surface-strong) p-3 shadow-2xl shadow-black/30 backdrop-blur-xl dark:shadow-black/60">
+        <div className="absolute right-0 top-full z-20 mt-2 w-64 rounded-2xl border border-[#cf9c4e]/15 bg-(--surface-strong) p-3 shadow-2xl shadow-black/30 backdrop-blur-xl dark:shadow-black/60">
           <div className="flex items-center gap-3 border-b border-(--hairline) pb-3">
             <span
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-black"
@@ -87,7 +89,7 @@ export function ProfileMenu({ accent, themes, activeTheme, onThemeChange, user }
             <ThemeModeToggle />
           </div>
 
-          {isGuest && (
+          {isGuest ? (
             <div className="mt-3 flex gap-2">
               <Link
                 href="/signup"
@@ -105,6 +107,15 @@ export function ProfileMenu({ accent, themes, activeTheme, onThemeChange, user }
                 Log in
               </Link>
             </div>
+          ) : (
+            <button
+              type="button"
+              disabled={isLoggingOut}
+              onClick={() => startLogout(() => logout())}
+              className="mt-3 w-full rounded-xl border border-(--hairline) bg-(--surface) py-2.5 text-center text-sm font-medium text-(--text-dim) transition hover:bg-(--surface-hover) hover:text-(--text) disabled:opacity-50"
+            >
+              {isLoggingOut ? "Logging out…" : "Log out"}
+            </button>
           )}
         </div>
       )}

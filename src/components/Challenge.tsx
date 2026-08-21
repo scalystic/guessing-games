@@ -161,7 +161,7 @@ export function Challenge({ accent }: { accent: string }) {
           <p
             className="h-4 text-center text-sm font-bold transition-opacity"
             style={{
-              color: flash === "correct" ? "#34d399" : "#f87171",
+              color: flash === "correct" ? "#6ba385" : "#c17a6b",
               opacity: flash ? 1 : 0,
             }}
           >

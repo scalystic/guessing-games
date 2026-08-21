@@ -150,6 +150,7 @@ export function PlayerBar({ song, revealMs, accent, locked }: Props) {
           type="button"
           onClick={isPlaying ? handleStop : handlePlay}
           disabled={status === "loading"}
+          suppressHydrationWarning
           className={`flex h-13 w-13 shrink-0 items-center justify-center rounded-full text-black shadow-lg transition hover:scale-105 active:scale-95 disabled:opacity-50 ${isPlaying ? "pulse-ring" : ""}`}
           style={{
             background: accent,

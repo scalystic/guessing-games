@@ -25,15 +25,15 @@ export function AttemptTimeline({ guesses, currentAttempt, accent }: Props) {
 
         if (record?.correct) {
           content = "✓";
-          bg = "#34d399";
-          color = "#052e1f";
+          bg = "#6ba385";
+          color = "#0d211a";
         } else if (record?.skipped) {
           content = "»";
           usedUp = true;
         } else if (record) {
           content = "✕";
-          bg = "#f87171";
-          color = "#450a0a";
+          bg = "#c17a6b";
+          color = "#2b1512";
         } else if (isCurrent) {
           bg = accent;
           color = "#000";

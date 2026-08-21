@@ -98,11 +98,11 @@ export function GuessAutocomplete({
       <div className="flex gap-2">
         <div className="relative flex-1">
           <svg
-            className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-(--text-faint)"
+            className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-(--text-dim)"
             viewBox="0 0 20 20"
             fill="none"
             stroke="currentColor"
-            strokeWidth="2"
+            strokeWidth="2.25"
             aria-hidden="true"
           >
             <circle cx="8.5" cy="8.5" r="6" />
@@ -118,7 +118,8 @@ export function GuessAutocomplete({
             onFocus={() => setOpen(true)}
             onKeyDown={handleKeyDown}
             placeholder={disabled ? "Round over" : "Type a song or artist…"}
-            className="w-full rounded-2xl border border-(--hairline) bg-(--surface) py-3.5 pr-4 pl-10 text-sm text-(--text) placeholder:text-(--text-faint) outline-none backdrop-blur-sm transition focus:border-[#f6c453]/40 focus:bg-(--surface-hover) disabled:opacity-40"
+            className="w-full rounded-2xl border-2 bg-(--surface) py-3.5 pr-4 pl-10 text-sm text-(--text) placeholder:text-(--text-dim) outline-none backdrop-blur-sm transition focus:bg-(--surface-hover) disabled:opacity-40"
+            style={{ borderColor: `${accent}55` }}
           />
           {open && results.length > 0 && (
             <ul className="absolute bottom-full z-20 mb-2 max-h-72 w-full overflow-auto rounded-2xl border border-(--hairline) bg-(--surface-strong) p-1.5 shadow-2xl shadow-black/30 backdrop-blur-xl dark:shadow-black/50">
@@ -160,18 +161,10 @@ export function GuessAutocomplete({
           type="button"
           disabled={disabled}
           onClick={onSkip}
-          className="shrink-0 rounded-2xl border border-(--hairline) bg-(--surface) px-4 text-sm font-medium text-(--text-dim) transition hover:bg-(--surface-hover) hover:text-(--text) disabled:opacity-40"
+          className="shrink-0 rounded-2xl border-2 bg-(--surface) px-5 text-sm font-bold text-(--text) transition enabled:hover:scale-[1.03] enabled:hover:bg-(--surface-hover) enabled:active:scale-95 disabled:opacity-40"
+          style={{ borderColor: `${accent}55` }}
         >
           Skip
-        </button>
-        <button
-          type="button"
-          disabled={disabled || results.length === 0}
-          onClick={() => results[0] && pick(results[activeIndex] ?? results[0])}
-          className="shrink-0 rounded-2xl px-5 text-sm font-semibold text-black transition enabled:hover:scale-[1.03] enabled:active:scale-95 disabled:opacity-30"
-          style={{ background: accent }}
-        >
-          Guess
         </button>
       </div>
     </div>

@@ -63,11 +63,11 @@ export function LiveBackground() {
       for (const p of particles) {
         ctx.globalAlpha = p.opacity;
         if (p.glyph) {
-          ctx.fillStyle = "#8fa5ff";
+          ctx.fillStyle = "#7c88ad";
           ctx.font = `${Math.round(p.r * 6)}px sans-serif`;
           ctx.fillText(p.glyph, p.x, p.y);
         } else {
-          ctx.fillStyle = "#a8b8ff";
+          ctx.fillStyle = "#8c96b8";
           ctx.beginPath();
           ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
           ctx.fill();

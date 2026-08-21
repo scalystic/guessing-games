@@ -1,26 +1,32 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useSyncExternalStore } from "react";
 import { signup } from "@/lib/auth/actions";
 import GoogleButton from "@/app/components/auth/google-button";
+import { getServerThemeColor, getThemeColor, subscribeThemeColor } from "@/lib/theme-color";
 
 export default function SignupForm() {
   const [state, action, pending] = useActionState(signup, undefined);
+  const theme = useSyncExternalStore(subscribeThemeColor, getThemeColor, getServerThemeColor);
+  const ACCENT = theme.solid;
 
   return (
     <form action={action} className="flex flex-col gap-6">
       <div className="flex flex-col gap-1.5">
-        <h1 className="text-2xl font-semibold tracking-tight text-black dark:text-zinc-50">
+        <h1 className="font-[family-name:var(--font-display)] text-2xl font-bold tracking-tight text-(--text)">
           Create your account
         </h1>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        <p className="text-sm text-(--text-dim)">
           Your guest progress will be saved automatically.
         </p>
       </div>
 
       {state?.message && (
-        <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-400">
+        <div
+          className="rounded-xl px-4 py-3 text-sm"
+          style={{ background: "rgba(193,122,107,0.12)", color: "#c17a6b" }}
+        >
           {state.message}
         </div>
       )}
@@ -29,10 +35,10 @@ export default function SignupForm() {
 
       <div className="relative my-2">
         <div className="absolute inset-0 flex items-center">
-          <div className="w-full border-t border-zinc-200 dark:border-zinc-800" />
+          <div className="w-full border-t border-(--hairline)" />
         </div>
         <div className="relative flex justify-center text-sm">
-          <span className="bg-white px-2 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+          <span className="bg-(--surface-strong) px-2 text-(--text-faint)">
             Or continue with email
           </span>
         </div>
@@ -40,10 +46,7 @@ export default function SignupForm() {
 
       {/* Display name */}
       <div className="flex flex-col gap-2">
-        <label
-          htmlFor="signup-displayName"
-          className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
-        >
+        <label htmlFor="signup-displayName" className="text-sm font-medium text-(--text-dim)">
           Display name
         </label>
         <input
@@ -53,10 +56,11 @@ export default function SignupForm() {
           required
           autoComplete="name"
           placeholder="Your name"
-          className="rounded-lg border border-zinc-300 bg-white px-3.5 py-2.5 text-sm text-black outline-none transition-colors placeholder:text-zinc-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder:text-zinc-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/20"
+          className="rounded-xl border-2 bg-(--surface) px-3.5 py-2.5 text-sm text-(--text) outline-none transition-colors placeholder:text-(--text-dim)"
+          style={{ borderColor: `${ACCENT}30` }}
         />
         {state?.errors?.displayName && (
-          <p className="text-xs text-red-600 dark:text-red-400">
+          <p className="text-xs" style={{ color: "#c17a6b" }}>
             {state.errors.displayName[0]}
           </p>
         )}
@@ -64,10 +68,7 @@ export default function SignupForm() {
 
       {/* Email */}
       <div className="flex flex-col gap-2">
-        <label
-          htmlFor="signup-email"
-          className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
-        >
+        <label htmlFor="signup-email" className="text-sm font-medium text-(--text-dim)">
           Email
         </label>
         <input
@@ -77,10 +78,11 @@ export default function SignupForm() {
           required
           autoComplete="email"
           placeholder="you@example.com"
-          className="rounded-lg border border-zinc-300 bg-white px-3.5 py-2.5 text-sm text-black outline-none transition-colors placeholder:text-zinc-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder:text-zinc-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/20"
+          className="rounded-xl border-2 bg-(--surface) px-3.5 py-2.5 text-sm text-(--text) outline-none transition-colors placeholder:text-(--text-dim)"
+          style={{ borderColor: `${ACCENT}30` }}
         />
         {state?.errors?.email && (
-          <p className="text-xs text-red-600 dark:text-red-400">
+          <p className="text-xs" style={{ color: "#c17a6b" }}>
             {state.errors.email[0]}
           </p>
         )}
@@ -88,10 +90,7 @@ export default function SignupForm() {
 
       {/* Password */}
       <div className="flex flex-col gap-2">
-        <label
-          htmlFor="signup-password"
-          className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
-        >
+        <label htmlFor="signup-password" className="text-sm font-medium text-(--text-dim)">
           Password
         </label>
         <input
@@ -101,10 +100,11 @@ export default function SignupForm() {
           required
           autoComplete="new-password"
           placeholder="At least 8 characters"
-          className="rounded-lg border border-zinc-300 bg-white px-3.5 py-2.5 text-sm text-black outline-none transition-colors placeholder:text-zinc-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder:text-zinc-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/20"
+          className="rounded-xl border-2 bg-(--surface) px-3.5 py-2.5 text-sm text-(--text) outline-none transition-colors placeholder:text-(--text-dim)"
+          style={{ borderColor: `${ACCENT}30` }}
         />
         {state?.errors?.password && (
-          <ul className="flex flex-col gap-0.5 text-xs text-red-600 dark:text-red-400">
+          <ul className="flex flex-col gap-0.5 text-xs" style={{ color: "#c17a6b" }}>
             {state.errors.password.map((error) => (
               <li key={error}>• {error}</li>
             ))}
@@ -116,7 +116,8 @@ export default function SignupForm() {
       <button
         type="submit"
         disabled={pending}
-        className="mt-1 flex h-11 items-center justify-center rounded-lg bg-gradient-to-r from-violet-600 to-fuchsia-600 text-sm font-medium text-white shadow-sm transition-all hover:from-violet-500 hover:to-fuchsia-500 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+        className="mt-1 flex h-11 items-center justify-center rounded-xl text-sm font-semibold text-black shadow-sm transition enabled:hover:scale-[1.02] enabled:active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+        style={{ background: ACCENT }}
       >
         {pending ? (
           <span className="inline-flex items-center gap-2">
@@ -147,12 +148,9 @@ export default function SignupForm() {
       </button>
 
       {/* Login link */}
-      <p className="text-center text-sm text-zinc-500 dark:text-zinc-400">
+      <p className="text-center text-sm text-(--text-dim)">
         Already have an account?{" "}
-        <Link
-          href="/login"
-          className="font-medium text-violet-600 transition-colors hover:text-violet-500 dark:text-violet-400 dark:hover:text-violet-300"
-        >
+        <Link href="/login" className="font-medium transition-colors" style={{ color: ACCENT }}>
           Log in
         </Link>
       </p>

@@ -117,7 +117,7 @@ export function DailyHit({ accent }: { accent: string }) {
         <div className="flex flex-col items-center gap-1.5 rounded-2xl border border-(--hairline) bg-(--surface) p-4 text-center">
           <p
             className="text-xs font-bold uppercase tracking-wide"
-            style={{ color: status === "SOLVED" ? "#34d399" : "#f87171" }}
+            style={{ color: status === "SOLVED" ? "#6ba385" : "#c17a6b" }}
           >
             {status === "SOLVED" ? "Solved!" : "Not today"}
           </p>

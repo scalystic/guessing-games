@@ -48,8 +48,8 @@ export function RoundHistoryList({ entries, now }: { entries: RoundHistoryEntry[
             <span
               className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold"
               style={{
-                background: entry.solved ? "rgba(52,211,153,0.18)" : "rgba(248,113,113,0.18)",
-                color: entry.solved ? "#34d399" : "#f87171",
+                background: entry.solved ? "rgba(107,163,133,0.18)" : "rgba(193,122,107,0.18)",
+                color: entry.solved ? "#6ba385" : "#c17a6b",
               }}
             >
               {entry.solved ? "✓" : "✕"}

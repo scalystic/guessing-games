@@ -13,11 +13,11 @@ export default function GoogleButton() {
         startTransition(() => {});
         window.location.href = window.location.origin + "/api/auth/google";
       }}
-      className="flex h-11 w-full cursor-pointer items-center justify-center gap-3 rounded-lg border border-zinc-300 bg-white px-3.5 py-2.5 text-sm font-medium text-black shadow-sm transition-all hover:bg-zinc-50 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:hover:bg-zinc-700"
+      className="flex h-11 w-full cursor-pointer items-center justify-center gap-3 rounded-xl border border-(--hairline) bg-(--surface) px-3.5 py-2.5 text-sm font-medium text-(--text) shadow-sm transition-colors hover:bg-(--surface-hover) disabled:cursor-not-allowed disabled:opacity-50"
     >
       {isPending ? (
         <svg
-          className="h-5 w-5 animate-spin text-zinc-500"
+          className="h-5 w-5 animate-spin text-(--text-dim)"
           viewBox="0 0 24 24"
           fill="none"
         >
