@@ -88,6 +88,14 @@ stage 6, not a formality.
      URL, a key like `blank-space-taylor-swift.mp3` *is* the answer.
 3. **The client does not send `roundIndex`.** `guess` and `skip` act on
    `Run.currentRoundIndex`. Old rounds are unreachable by construction.
+   - The one read that deliberately looks backwards is `audio?reveal=1`, which
+     serves the FULL clip for the latest round whose `outcome != PENDING` — the
+     answer the result panel is already showing. It still takes no round index
+     from the client, and it cannot address a `PENDING` round at all, so it
+     cannot be used to hear ahead. It looks backwards rather than at
+     `currentRoundIndex` because resolving a round advances that index in the
+     same transaction, so the "current" round is already the next one by the
+     time the panel renders.
 4. **The client does not send stage, attempt number, or score.** All derived from
    `RunRound` + `Guess` rows.
 5. **Idempotency.** Every attempt carries a client-generated key, unique on
@@ -111,6 +119,8 @@ POST   /api/runs                      → start a run   { gameSlug, mode }
 GET    /api/runs/[runId]              → resume: current round, stage, asset URL
 POST   /api/runs/[runId]/guess        → { guessedPuzzleId, idempotencyKey }
 POST   /api/runs/[runId]/skip         → { idempotencyKey }
+GET    /api/runs/[runId]/audio        → the current round's earned prefix
+GET    /api/runs/[runId]/audio?reveal=1 → the whole clip, resolved rounds only
 POST   /api/runs/[runId]/abandon
 GET    /api/games/[slug]/search       → typeahead over the catalog
 GET    /api/games/[slug]/leaderboard  → ?board=DAILY&period=2026-08-19

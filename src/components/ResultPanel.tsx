@@ -1,26 +1,28 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import type { Song } from "@/data/songs";
 import type { RoundStatus } from "@/hooks/useMelodleGame";
-import { MAX_ATTEMPTS, REVEAL_LADDER_MS } from "@/hooks/useMelodleGame";
-import { ToneEngine } from "@/lib/tone-engine";
-import { usePreviewUrl } from "@/hooks/usePreviewUrl";
+import type { Reveal } from "@/lib/api/runs";
+import { coverBackground } from "@/lib/cover";
 import { Confetti } from "./Confetti";
 
-// Same ceiling PlayerBar uses for a fully-unlocked clip — the round is over,
-// so there's no reveal ladder here, just "play the whole thing".
-const FULL_DURATION_MS = REVEAL_LADDER_MS[REVEAL_LADDER_MS.length - 1];
-
 type Props = {
-  song: Song;
+  /// The answer, as returned by the server once the round resolved. The client
+  /// never had it before this point.
+  reveal: Reveal;
   status: RoundStatus;
   attemptsUsed: number;
+  maxAttempts: number;
   points: number | null;
   guesses: { correct: boolean; skipped: boolean }[];
   streak: number;
   score: number;
   accent: string;
+  /// Object URL for the WHOLE clip, not the prefix the round unlocked — this is
+  /// the one place the player gets to hear all of it. Null while it loads, or if
+  /// the fetch failed, in which case the cover tile is just a cover tile.
+  fullAudioUrl: string | null;
+  audioLoading: boolean;
   onNext: () => void;
 };
 
@@ -31,87 +33,70 @@ type Props = {
 // end-of-round modal — closing it any other way would just leave an empty
 // gap where the guess box used to be, since the round is still resolved.
 export function ResultPanel({
-  song,
+  reveal,
   status,
   attemptsUsed,
+  maxAttempts,
   points,
   guesses,
   streak,
   score,
   accent,
+  fullAudioUrl,
+  audioLoading,
   onNext,
 }: Props) {
   const [copied, setCopied] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
-  const { previewUrl, status: previewStatus } = usePreviewUrl(song);
-  const engineRef = useRef<ToneEngine | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const stopTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const won = status === "SOLVED";
 
+  // Same shape as PlayerBar: a fresh element per URL, so a previous round's
+  // buffer can't still be decoding when this one starts.
   useEffect(() => {
-    engineRef.current = new ToneEngine();
-    return () => engineRef.current?.dispose();
-  }, []);
-
-  useEffect(() => {
-    if (!previewUrl) {
+    if (!fullAudioUrl) {
       audioRef.current = null;
       return;
     }
-    const audio = new Audio(previewUrl);
+
+    const audio = new Audio(fullAudioUrl);
     audio.preload = "auto";
     audioRef.current = audio;
+
+    // No fade and no stop timer here, unlike PlayerBar — this is the complete
+    // file, so it ends where the recording ends rather than being cut off
+    // mid-note at a ladder boundary.
+    const done = () => setIsPlaying(false);
+    audio.addEventListener("ended", done);
+
     return () => {
+      audio.removeEventListener("ended", done);
       audio.pause();
       audioRef.current = null;
+      setIsPlaying(false);
     };
-  }, [previewUrl]);
-
-  useEffect(() => {
-    return () => {
-      if (stopTimeoutRef.current) clearTimeout(stopTimeoutRef.current);
-    };
-  }, []);
-
-  function stopPlayback() {
-    engineRef.current?.stop();
-    audioRef.current?.pause();
-    if (stopTimeoutRef.current) clearTimeout(stopTimeoutRef.current);
-    setIsPlaying(false);
-  }
+  }, [fullAudioUrl]);
 
   function togglePlayback() {
+    const audio = audioRef.current;
+    if (!audio) return;
+
     if (isPlaying) {
-      stopPlayback();
+      audio.pause();
+      setIsPlaying(false);
       return;
     }
-    if (previewStatus === "loading") return;
-    engineRef.current?.stop();
-    audioRef.current?.pause();
-    setIsPlaying(true);
 
-    const audio = audioRef.current;
-    if (previewStatus === "ready" && audio) {
-      audio.currentTime = 0;
-      audio.play().catch(() => setIsPlaying(false));
-      stopTimeoutRef.current = setTimeout(() => {
-        audio.pause();
-        setIsPlaying(false);
-      }, FULL_DURATION_MS);
-    } else {
-      const engine = engineRef.current;
-      if (!engine) return;
-      engine.onEnded = () => setIsPlaying(false);
-      engine.play(song, FULL_DURATION_MS);
-    }
+    audio.currentTime = 0;
+    setIsPlaying(true);
+    void audio.play().catch(() => setIsPlaying(false));
   }
 
   function share() {
     const squares = guesses
       .map((g) => (g.correct ? "🟩" : g.skipped ? "⬛" : "🟥"))
       .join("");
-    const text = `Sargam ${won ? attemptsUsed || 1 : "X"}/${MAX_ATTEMPTS}\n${squares}`;
+    const text = `Sargam ${won ? attemptsUsed || 1 : "X"}/${maxAttempts}\n${squares}`;
     navigator.clipboard?.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
@@ -130,40 +115,42 @@ export function ResultPanel({
           <div className="relative">
             <div
               className="flex h-20 w-20 items-center justify-center rounded-2xl text-2xl font-bold text-white shadow-lg"
-              style={{ background: `linear-gradient(135deg, ${song.cover[0]}, ${song.cover[1]})` }}
+              style={{ background: coverBackground(`${reveal.title} ${reveal.artist}`) }}
             >
-              {song.title[0]}
+              {reveal.title[0]}
             </div>
             <button
               type="button"
               onClick={togglePlayback}
-              disabled={previewStatus === "loading"}
-              aria-label={isPlaying ? "Stop song" : "Play full song"}
-              className="absolute inset-0 flex items-center justify-center rounded-2xl bg-black/25 transition hover:bg-black/35"
+              disabled={audioLoading || !fullAudioUrl}
+              aria-label={isPlaying ? "Stop the song" : "Play the whole song"}
+              className="absolute inset-0 flex items-center justify-center rounded-2xl bg-black/25 transition hover:bg-black/35 disabled:hover:bg-black/25"
             >
               <span
                 className={`flex h-11 w-11 items-center justify-center rounded-full border-2 text-black shadow-md transition hover:scale-105 active:scale-95 ${isPlaying ? "pulse-ring" : ""}`}
-                style={{
-                  background: accent,
-                  borderColor: "var(--surface-strong)",
-                  "--pulse-color": `${accent}80`,
-                } as CSSProperties}
+                style={
+                  {
+                    background: accent,
+                    borderColor: "var(--surface-strong)",
+                    "--pulse-color": `${accent}80`,
+                  } as CSSProperties
+                }
               >
-              {previewStatus === "loading" ? (
-                <svg width="16" height="16" viewBox="0 0 20 20" className="animate-spin" fill="none">
-                  <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="2.5" strokeOpacity="0.3" />
-                  <path d="M17 10a7 7 0 0 0-7-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-                </svg>
-              ) : isPlaying ? (
-                <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor">
-                  <rect x="4" y="3" width="4" height="14" rx="1" />
-                  <rect x="12" y="3" width="4" height="14" rx="1" />
-                </svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor">
-                  <path d="M5 3.5v13l11-6.5-11-6.5z" />
-                </svg>
-              )}
+                {audioLoading ? (
+                  <svg width="16" height="16" viewBox="0 0 20 20" className="animate-spin" fill="none">
+                    <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="2.5" strokeOpacity="0.3" />
+                    <path d="M17 10a7 7 0 0 0-7-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                  </svg>
+                ) : isPlaying ? (
+                  <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor">
+                    <rect x="4" y="3" width="4" height="14" rx="1" />
+                    <rect x="12" y="3" width="4" height="14" rx="1" />
+                  </svg>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M5 3.5v13l11-6.5-11-6.5z" />
+                  </svg>
+                )}
               </span>
             </button>
           </div>
@@ -175,10 +162,12 @@ export function ResultPanel({
             {won ? "🎉 Nailed it!" : "Not this time"}
           </p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-2xl font-bold text-(--text)">
-            {song.title}
+            {reveal.title}
           </p>
+          {/* album and releaseYear are nullable in the catalog, so build this
+              from whatever is actually there rather than printing "null". */}
           <p className="mt-1 text-sm text-(--text-dim)">
-            {song.artist} · {song.album} · {song.year}
+            {[reveal.artist, reveal.album, reveal.releaseYear].filter(Boolean).join(" · ")}
           </p>
 
           {won && points !== null && (

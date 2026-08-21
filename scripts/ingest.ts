@@ -40,6 +40,10 @@ import { PrismaPg } from '@prisma/adapter-pg'
 import { z } from 'zod'
 import { PrismaClient } from '../src/generated/prisma/client'
 import { isStorageConfigured, objectSize, putObject } from '../src/lib/storage'
+// Shared with the search endpoint on purpose: the index this writes and the
+// queries that read it have to normalise identically, and a second copy of the
+// transform drifts silently.
+import { buildSearchText } from '../src/lib/game/search-text'
 import { computeLadderOffsets } from './lib/mp3'
 
 const run = promisify(execFile)
@@ -103,18 +107,6 @@ type Track = z.infer<typeof TrackSchema>
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Normalised title+artist for the trigram index. Strips diacritics and
-/// punctuation so "Dont Stop Me Now" matches "Don't Stop Me Now".
-function buildSearchText(title: string, artist: string): string {
-  return `${title} ${artist}`
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
 
 async function probeDurationMs(file: string): Promise<number> {
   const { stdout } = await run('ffprobe', [

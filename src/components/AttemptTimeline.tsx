@@ -1,17 +1,19 @@
 "use client";
 
-import { MAX_ATTEMPTS, type GuessRecord } from "@/hooks/useMelodleGame";
+import { type GuessRecord } from "@/hooks/useMelodleGame";
 
 type Props = {
   guesses: GuessRecord[];
   currentAttempt: number; // 1-indexed
+  /// Game.maxAttempts, from the server — not a client-side constant.
+  maxAttempts: number;
   accent: string;
 };
 
-export function AttemptTimeline({ guesses, currentAttempt, accent }: Props) {
+export function AttemptTimeline({ guesses, currentAttempt, maxAttempts, accent }: Props) {
   return (
     <div className="flex w-full gap-1.5">
-      {Array.from({ length: MAX_ATTEMPTS }, (_, i) => {
+      {Array.from({ length: maxAttempts }, (_, i) => {
         const record = guesses[i];
         const isCurrent = !record && i + 1 === currentAttempt;
 

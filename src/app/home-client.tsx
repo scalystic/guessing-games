@@ -3,10 +3,10 @@
 import { useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import type { CurrentUser } from "@/lib/get-current-user";
-import { SONGS } from "@/data/songs";
+import type { GameDetail } from "@/lib/games";
 import { THEMES } from "@/data/themes";
 import { getServerThemeColor, getThemeColor, setThemeColor, subscribeThemeColor } from "@/lib/theme-color";
-import { useMelodleGame, MAX_ATTEMPTS } from "@/hooks/useMelodleGame";
+import { useMelodleGame } from "@/hooks/useMelodleGame";
 import { useNow } from "@/hooks/useNow";
 import { PlayerBar } from "@/components/PlayerBar";
 import { AttemptTimeline } from "@/components/AttemptTimeline";
@@ -41,7 +41,7 @@ function HeaderIcon({ label, children }: { label: string; children: React.ReactN
   );
 }
 
-export default function Home({ user }: { user: CurrentUser }) {
+export default function Home({ user, game: config }: { user: CurrentUser; game: GameDetail }) {
   const theme = useSyncExternalStore(subscribeThemeColor, getThemeColor, getServerThemeColor);
   const [showHelp, setShowHelp] = useState(false);
   const [showStats, setShowStats] = useState(false);
@@ -52,14 +52,26 @@ export default function Home({ user }: { user: CurrentUser }) {
   const [showDailyHit, setShowDailyHit] = useState(false);
   const [showChallenge, setShowChallenge] = useState(false);
   const [showAuthGate, setShowAuthGate] = useState(false);
-  const game = useMelodleGame();
+  const game = useMelodleGame({
+    gameSlug: config.slug,
+    revealLadder: config.revealLadder,
+    maxAttempts: config.maxAttempts,
+  });
   const now = useNow();
 
   const isGuest = !user || user.kind === "GUEST";
   const guestLimitReached = isGuest && game.roundsPlayed >= FREE_GUEST_ROUNDS;
 
-  const excludeIds = useMemo(
-    () => new Set(game.guesses.filter((g) => g.song).map((g) => g.song!.id)),
+  // The typeahead deals in puzzleIds, so exclusion is keyed on those. Guesses
+  // recovered from a resume have a null id and stay offerable — a much smaller
+  // cost than having the resume payload enumerate wrong answers.
+  const excludePuzzleIds = useMemo(
+    () =>
+      new Set(
+        game.guesses
+          .map((entry) => entry.puzzleId)
+          .filter((id): id is string => id !== null),
+      ),
     [game.guesses],
   );
 
@@ -87,7 +99,7 @@ export default function Home({ user }: { user: CurrentUser }) {
       setShowAuthGate(true);
       return;
     }
-    game.nextRound();
+    void game.nextRound();
   }
 
   function handlePlayNow() {
@@ -193,6 +205,22 @@ export default function Home({ user }: { user: CurrentUser }) {
           </div>
         </div>
 
+        {/* Anything the server refused, in the server's own words — "No playable
+            puzzles are available right now." is more use than a generic sorry. */}
+        {game.error && (
+          <div className="flex items-center gap-3 rounded-2xl border border-[#f87171]/40 bg-[#f87171]/10 px-4 py-3 text-sm text-(--text)">
+            <span aria-hidden="true">⚠️</span>
+            <span className="flex-1">{game.error}</span>
+            <button
+              type="button"
+              onClick={game.phase === "error" ? game.restartRun : game.dismissError}
+              className="shrink-0 rounded-lg border border-(--hairline) bg-(--surface) px-3 py-1.5 text-xs font-medium text-(--text-dim) transition hover:bg-(--surface-hover)"
+            >
+              {game.phase === "error" ? "Try again" : "Dismiss"}
+            </button>
+          </div>
+        )}
+
         {/* Game card */}
         <div
           className="flex flex-col gap-5 rounded-3xl border p-5 shadow-2xl shadow-black/20 backdrop-blur-sm dark:shadow-black/50"
@@ -201,53 +229,68 @@ export default function Home({ user }: { user: CurrentUser }) {
           <HeroBanner from={theme.from} to={theme.to} />
 
           <PlayerBar
-            song={game.target}
+            audioUrl={game.audioUrl}
             revealMs={game.revealMs}
+            totalMs={game.totalMs}
+            ladder={game.revealLadder}
             accent={accent}
-            locked={resolved}
+            loading={game.audioLoading || game.phase === "starting"}
+            // Per round, so the shape changes with the song but holds still
+            // while the ladder advances within a round.
+            waveformSeed={`${game.runId ?? "run"}:${game.roundIndex}`}
           />
 
           <AttemptTimeline
             guesses={game.guesses}
             currentAttempt={game.attemptsUsed + 1}
+            maxAttempts={game.maxAttempts}
             accent={accent}
           />
 
+          {/* Hint fields are individually nullable — a catalog entry may have no
+              release year or no genre — so render only what's actually there. */}
           {game.hint && !resolved && (
             <div className="flex flex-wrap items-center gap-2 rounded-xl border border-(--hairline) bg-(--surface) px-3 py-2 text-xs text-(--text-dim)">
               <span className="font-semibold text-(--text)">Hint:</span>
-              <span>{game.hint.decade}</span>
-              <span className="text-(--text-faint)">·</span>
-              <span>{game.hint.genre}</span>
-              {"firstLetter" in game.hint && (
-                <>
-                  <span className="text-(--text-faint)">·</span>
-                  <span>starts with “{game.hint.firstLetter}”</span>
-                </>
-              )}
+              {[
+                game.hint.decade,
+                game.hint.genre,
+                game.hint.firstLetter ? `starts with “${game.hint.firstLetter}”` : null,
+              ]
+                .filter((part): part is string => part !== null)
+                .map((part, i) => (
+                  <span key={part} className="flex items-center gap-2">
+                    {i > 0 && <span className="text-(--text-faint)">·</span>}
+                    <span>{part}</span>
+                  </span>
+                ))}
             </div>
           )}
 
           {!resolved && (
             <GuessAutocomplete
-              songs={SONGS}
-              excludeIds={excludeIds}
+              gameSlug={config.slug}
+              excludePuzzleIds={excludePuzzleIds}
               accent={accent}
-              onGuess={(song) => game.submitGuess(song)}
-              onSkip={() => game.submitGuess(null, true)}
+              disabled={game.pending || game.phase !== "ready"}
+              onGuess={(match) => void game.guess(match)}
+              onSkip={() => void game.skip()}
             />
           )}
 
-          {resolved && (
+          {resolved && game.reveal && (
             <ResultPanel
-              song={game.target}
+              reveal={game.reveal}
               status={game.status}
               attemptsUsed={game.attemptsUsed}
+              maxAttempts={game.maxAttempts}
               points={game.lastPoints}
               guesses={game.guesses}
               streak={game.streak}
               score={game.score}
               accent={accent}
+              fullAudioUrl={game.revealAudioUrl}
+              audioLoading={game.revealAudioLoading}
               onNext={handleNextRound}
             />
           )}
@@ -256,15 +299,11 @@ export default function Home({ user }: { user: CurrentUser }) {
         <RoundHistoryList entries={game.roundHistory} now={now} />
 
         <QuoteFooter accent={accent} />
-
-        <p className="pb-4 text-center text-[11px] text-(--text-faint)">
-          Demo audio is a placeholder synth — real Bollywood clips arrive with the backend.
-        </p>
       </div>
 
       {showHelp && (
         <Modal title="How to play" accent={accent} onClose={() => setShowHelp(false)}>
-          <HowToPlayList maxAttempts={MAX_ATTEMPTS} />
+          <HowToPlayList maxAttempts={game.maxAttempts} />
         </Modal>
       )}
 

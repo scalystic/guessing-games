@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { RoundHistoryEntry } from "@/hooks/useMelodleGame";
+import { coverBackground } from "@/lib/cover";
 
 const COLLAPSED_COUNT = 3;
 
@@ -56,7 +57,7 @@ export function RoundHistoryList({ entries, now }: { entries: RoundHistoryEntry[
             </span>
             <span
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white/90"
-              style={{ background: `linear-gradient(135deg, ${entry.song.cover[0]}, ${entry.song.cover[1]})` }}
+              style={{ background: coverBackground(`${entry.song.title} ${entry.song.artist}`) }}
             >
               {entry.song.title[0]}
             </span>

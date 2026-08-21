@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/db";
 import { samplePuzzle } from "@/lib/game/selection";
 import { scoreSolvedRound, solveExtendsStreak } from "@/lib/game/scoring/v1";
+import { deriveHint, hintSelect, type RoundHint } from "@/lib/game/hint";
 
 /// One attempt — a guess or a skip. Both advance the ladder, so they share every
 /// line of this except whether a correct answer is even possible.
@@ -35,7 +36,17 @@ export type AttemptResult = {
   /// Null while PENDING.
   points: number | null;
   /// Revealed only once the round resolves.
-  reveal: { title: string; artist: string; album: string | null } | null;
+  reveal: {
+    title: string;
+    artist: string;
+    album: string | null;
+    releaseYear: number | null;
+  } | null;
+  /// Clue about the CURRENT round, earned by attempts already spent. Null until
+  /// the second attempt, and null again once the round resolves — at that point
+  /// `reveal` supersedes it. Derived server-side because the client never holds
+  /// the target.
+  hint: RoundHint | null;
 };
 
 export type AttemptError =
@@ -172,6 +183,7 @@ export async function applyAttempt(input: AttemptInput): Promise<AttemptResult> 
       roundIndex: round.roundIndex,
       points: null,
       reveal: null,
+      hint: await hintFor(tx, round.puzzleId, updated.attemptsUsed),
     };
   });
 }
@@ -181,6 +193,25 @@ export async function applyAttempt(input: AttemptInput): Promise<AttemptResult> 
 // ---------------------------------------------------------------------------
 
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/// Hint for a round still in progress. Cheap enough to fetch unconditionally,
+/// but skipped before the second attempt so an early round costs no query.
+async function hintFor(
+  tx: Tx,
+  puzzleId: string,
+  attemptsUsed: number,
+): Promise<RoundHint | null> {
+  if (attemptsUsed < 2) return null;
+
+  const song = await tx.song.findUnique({
+    where: { puzzleId },
+    select: hintSelect,
+  });
+
+  // A puzzle with no Song row can't be hinted. Selection requires an audio
+  // asset, not a Song, so this is reachable rather than impossible.
+  return song ? deriveHint(song, attemptsUsed) : null;
+}
 
 type ResolveArgs = {
   run: {
@@ -302,7 +333,7 @@ async function advance(
 
   const reveal = await tx.song.findUnique({
     where: { puzzleId: round.puzzleId },
-    select: { title: true, artist: true, album: true },
+    select: { title: true, artist: true, album: true, releaseYear: true },
   });
 
   // Either terminal condition completes the run. A daily that runs out of lives
@@ -336,6 +367,8 @@ async function advance(
       roundIndex: round.roundIndex,
       points: args.scoreDelta,
       reveal: reveal ?? null,
+      // The round is over; `reveal` says everything a hint would have.
+      hint: null,
     };
   }
 
@@ -386,6 +419,7 @@ async function advance(
       roundIndex: round.roundIndex,
       points: args.scoreDelta,
       reveal: reveal ?? null,
+      hint: null,
     };
   }
 
@@ -427,6 +461,9 @@ async function advance(
     roundIndex: round.roundIndex,
     points: args.scoreDelta,
     reveal: reveal ?? null,
+    // The round just resolved. The NEXT round starts at attempt 0, which earns
+    // no hint — so null is right here too, not a hint for the new puzzle.
+    hint: null,
   };
 }
 
@@ -458,7 +495,14 @@ async function describeCurrentState(tx: Tx, runId: string): Promise<AttemptResul
 
   const round = await tx.runRound.findUnique({
     where: { runId_roundIndex: { runId, roundIndex: run.currentRoundIndex } },
-    select: { outcome: true, stageReached: true, attemptsUsed: true, roundIndex: true, points: true },
+    select: {
+      outcome: true,
+      stageReached: true,
+      attemptsUsed: true,
+      roundIndex: true,
+      points: true,
+      puzzleId: true,
+    },
   });
 
   return {
@@ -473,6 +517,20 @@ async function describeCurrentState(tx: Tx, runId: string): Promise<AttemptResul
     // RunRound.points defaults to 0, so read it only once the round has actually
     // resolved — otherwise a replayed attempt reports a score for a live round.
     points: round && round.outcome !== "PENDING" ? round.points : null,
-    reveal: null,
+    // A replay must reproduce what the original response carried, both ways: the
+    // reveal for a round that has resolved, the hint for one still running.
+    // Returning null for a resolved round would mean a retried winning guess
+    // reports SOLVED with nothing to show for it.
+    reveal:
+      round && round.outcome !== "PENDING"
+        ? await tx.song.findUnique({
+            where: { puzzleId: round.puzzleId },
+            select: { title: true, artist: true, album: true, releaseYear: true },
+          })
+        : null,
+    hint:
+      round && round.outcome === "PENDING"
+        ? await hintFor(tx, round.puzzleId, round.attemptsUsed)
+        : null,
   };
 }

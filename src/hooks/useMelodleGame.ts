@@ -1,176 +1,548 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
-import { SONGS, type Song } from "@/data/songs";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ApiError } from "@/lib/api/client";
+import {
+  fetchRevealAudio,
+  fetchRunState,
+  fetchStageAudio,
+  newIdempotencyKey,
+  skipRound,
+  startRun,
+  submitGuess,
+  type AttemptResult,
+  type CatalogMatch,
+  type Reveal,
+  type RoundHint,
+  type RunStatus,
+} from "@/lib/api/runs";
+import { clearStoredRun, loadStoredRun, saveStoredRun } from "@/lib/run-storage";
 
-// Mirrors Game.revealLadder / Game.maxAttempts / the scoring formula in
-// docs/game-engine.md so the real backend can slot in without changing the
-// UI's mental model.
-export const REVEAL_LADDER_MS = [1000, 2000, 4000, 7000, 11000, 16000];
-export const MAX_ATTEMPTS = REVEAL_LADDER_MS.length;
-const STAGE_BASE = [1000, 800, 600, 400, 250, 100];
-const START_LIVES = 3;
+/// The run loop, driven entirely by the server.
+///
+/// Everything that used to be computed here — the target song, the stage, the
+/// score, whether a guess was right — now arrives from POST /api/runs and the
+/// attempt responses. The client's job is to render what it is told and to hold
+/// exactly two things the server can't: what the player typed at each attempt
+/// (the API echoes an outcome, not a label), and the object URL for the audio
+/// bytes it has already been handed.
+///
+/// One asymmetry worth knowing when reading this: resolving a round ALSO opens
+/// the next one server-side, in the same transaction. So by the time the result
+/// panel appears, `Run.currentRoundIndex` has already moved on and
+/// `nextAudioUrl` points at the new round's stage 1. `nextRound()` therefore
+/// makes no request beyond fetching that audio.
 
 export type RoundStatus = "PENDING" | "SOLVED" | "FAILED";
 
 export type GuessRecord = {
-  song: Song | null;
+  /// What the player named. Null for a skip.
+  song: { title: string; artist: string } | null;
+  /// The puzzle they named, so the typeahead can stop offering it. Null for a
+  /// skip, and null for guesses recovered from a resume — the resume payload
+  /// carries labels for display but not the ids of wrong guesses.
+  puzzleId: string | null;
   correct: boolean;
   skipped: boolean;
   at: number;
 };
 
-// One entry per finished round — distinct from GuessRecord, which is one
-// entry per attempt *within* the current round.
 export type RoundHistoryEntry = {
-  song: Song;
+  song: { title: string; artist: string; album: string | null; releaseYear: number | null };
   solved: boolean;
   attemptsUsed: number;
   at: number;
 };
 
-function shuffledIndices(length: number) {
-  const arr = Array.from({ length }, (_, i) => i);
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
+export type GameConfig = {
+  gameSlug: string;
+  revealLadder: number[];
+  maxAttempts: number;
+};
 
-export function useMelodleGame() {
-  // Populated lazily from nextSongIndex (an event handler, never render) so
-  // the server and client never need to agree on a random shuffle.
-  const songOrder = useRef<number[]>([]);
-  const songCursor = useRef(0);
+/// `starting` covers both a fresh run and a resume — the board can't be drawn
+/// either way. `error` is terminal until the player retries.
+export type GamePhase = "starting" | "ready" | "error";
 
-  // Deterministic first song — same on server and client — so nothing
-  // random has to happen during the initial render just to pick one.
-  const [targetIndex, setTargetIndex] = useState(0);
+export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConfig) {
+  const [phase, setPhase] = useState<GamePhase>("starting");
+  const [error, setError] = useState<string | null>(null);
+
+  const [runId, setRunId] = useState<string | null>(null);
+  const [runStatus, setRunStatus] = useState<RunStatus>("IN_PROGRESS");
+
+  // Current round.
+  const [roundIndex, setRoundIndex] = useState(1);
   const [stage, setStage] = useState(1);
   const [attemptsUsed, setAttemptsUsed] = useState(0);
   const [guesses, setGuesses] = useState<GuessRecord[]>([]);
   const [status, setStatus] = useState<RoundStatus>("PENDING");
-  const [lives, setLives] = useState(START_LIVES);
+  const [hint, setHint] = useState<RoundHint | null>(null);
+  const [reveal, setReveal] = useState<Reveal | null>(null);
+  const [lastPoints, setLastPoints] = useState<number | null>(null);
+
+  // Run totals — all server-owned.
+  const [lives, setLives] = useState(0);
   const [streak, setStreak] = useState(0);
   const [bestStreak, setBestStreak] = useState(0);
   const [score, setScore] = useState(0);
   const [roundsPlayed, setRoundsPlayed] = useState(0);
   const [roundsSolved, setRoundsSolved] = useState(0);
-  const [lastPoints, setLastPoints] = useState<number | null>(null);
   const [roundHistory, setRoundHistory] = useState<RoundHistoryEntry[]>([]);
 
-  const target = SONGS[targetIndex];
-  const revealMs = REVEAL_LADDER_MS[stage - 1];
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioLoading, setAudioLoading] = useState(false);
+  const [pending, setPending] = useState(false);
 
-  const nextSongIndex = useCallback(() => {
-    if (songCursor.current >= songOrder.current.length) {
-      songOrder.current = shuffledIndices(SONGS.length);
-      songCursor.current = 0;
+  /// The whole clip for the round that just resolved — what the result panel
+  /// plays back. Kept apart from `audioUrl`, which still holds only the prefix
+  /// this round actually earned: a stage-1 solve unlocked ~200ms, which is not
+  /// something worth offering a play button for.
+  const [revealAudioUrl, setRevealAudioUrl] = useState<string | null>(null);
+  const [revealAudioLoading, setRevealAudioLoading] = useState(false);
+
+  // The token never enters React state: it is not rendered, and keeping it in a
+  // ref means a stale closure can't hand an old run's token to a new run.
+  const tokenRef = useRef<string | null>(null);
+  const objectUrlRef = useRef<string | null>(null);
+  const revealObjectUrlRef = useRef<string | null>(null);
+  /// Bumped on every run start and round change. An audio fetch that resolves
+  /// after its generation is stale gets discarded instead of playing the
+  /// previous round's clip over the current one.
+  const generationRef = useRef(0);
+  /// Guards the mount effect against a second invocation.
+  ///
+  /// POST /api/runs is not idempotent — it creates a row. React's development
+  /// StrictMode mounts, unmounts and remounts every component, so without this
+  /// each page load starts TWO runs and abandons one. The generation counter
+  /// keeps state coherent when that happens, but it can't un-create the run.
+  const initializedRef = useRef(false);
+
+  const releaseAudio = useCallback(() => {
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
     }
-    const idx = songOrder.current[songCursor.current];
-    songCursor.current += 1;
-    return idx;
   }, []);
 
-  const resetRoundState = useCallback(() => {
-    setStage(1);
-    setAttemptsUsed(0);
+  const releaseRevealAudio = useCallback(() => {
+    if (revealObjectUrlRef.current) {
+      URL.revokeObjectURL(revealObjectUrlRef.current);
+      revealObjectUrlRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => releaseAudio, [releaseAudio]);
+  useEffect(() => releaseRevealAudio, [releaseRevealAudio]);
+
+  /// Pull the audio the current round has earned and swap it in.
+  const loadAudio = useCallback(
+    async (id: string, generation: number) => {
+      const token = tokenRef.current;
+      if (!token) return;
+
+      setAudioLoading(true);
+      try {
+        const audio = await fetchStageAudio(id, token);
+        if (generation !== generationRef.current) {
+          // Superseded while in flight. Revoke immediately or it leaks.
+          URL.revokeObjectURL(audio.objectUrl);
+          return;
+        }
+        releaseAudio();
+        objectUrlRef.current = audio.objectUrl;
+        setAudioUrl(audio.objectUrl);
+        // The server's stage is authoritative — trust the header over local
+        // bookkeeping if they ever disagree.
+        setStage(audio.stage);
+      } catch (cause) {
+        if (generation !== generationRef.current) return;
+        setAudioUrl(null);
+        setError(messageFor(cause, "Couldn't load the clip for this round."));
+      } finally {
+        if (generation === generationRef.current) setAudioLoading(false);
+      }
+    },
+    [releaseAudio],
+  );
+
+  /// Pull the full clip for the round that just resolved.
+  ///
+  /// Best-effort on purpose: a failure here costs the player a play button on a
+  /// round they already finished, so it must not raise the run-level error that
+  /// a failed stage fetch does.
+  const loadRevealAudio = useCallback(
+    async (id: string, generation: number) => {
+      const token = tokenRef.current;
+      if (!token) return;
+
+      setRevealAudioLoading(true);
+      try {
+        const audio = await fetchRevealAudio(id, token);
+        if (generation !== generationRef.current) {
+          URL.revokeObjectURL(audio.objectUrl);
+          return;
+        }
+        releaseRevealAudio();
+        revealObjectUrlRef.current = audio.objectUrl;
+        setRevealAudioUrl(audio.objectUrl);
+        // Deliberately not touching `stage`: the reveal always reports the last
+        // stage, which would misdraw the ladder the panel sits on top of.
+      } catch {
+        if (generation !== generationRef.current) return;
+        setRevealAudioUrl(null);
+      } finally {
+        if (generation === generationRef.current) setRevealAudioLoading(false);
+      }
+    },
+    [releaseRevealAudio],
+  );
+
+  const resetRoundView = useCallback(() => {
     setGuesses([]);
     setStatus("PENDING");
+    setHint(null);
+    setReveal(null);
     setLastPoints(null);
-  }, []);
+    setAttemptsUsed(0);
+    setStage(1);
+    releaseRevealAudio();
+    setRevealAudioUrl(null);
+    setRevealAudioLoading(false);
+  }, [releaseRevealAudio]);
 
-  const nextRound = useCallback(() => {
-    setTargetIndex(nextSongIndex());
-    resetRoundState();
-  }, [nextSongIndex, resetRoundState]);
+  /// Start a brand-new run, replacing anything stored.
+  const begin = useCallback(async () => {
+    const generation = ++generationRef.current;
 
-  const restartRun = useCallback(() => {
-    setLives(START_LIVES);
-    setStreak(0);
-    setScore(0);
+    setPhase("starting");
+    setError(null);
+    releaseAudio();
+    setAudioUrl(null);
+    resetRoundView();
+    setRoundHistory([]);
     setRoundsPlayed(0);
     setRoundsSolved(0);
-    setTargetIndex(nextSongIndex());
-    resetRoundState();
-  }, [nextSongIndex, resetRoundState]);
+    setScore(0);
+    setStreak(0);
+    setBestStreak(0);
 
-  const submitGuess = useCallback(
-    (song: Song | null, skip = false) => {
-      if (status !== "PENDING") return;
-      const correct = !skip && song?.id === target.id;
-      setGuesses((g) => [...g, { song, correct, skipped: skip, at: Date.now() }]);
+    try {
+      const started = await startRun(gameSlug, "PRACTICE");
+      if (generation !== generationRef.current) return;
 
-      if (correct) {
-        const points = Math.round(
-          STAGE_BASE[stage - 1] * (1 + Math.min(0.1 * streak, 0.5)),
-        );
-        setScore((s) => s + points);
-        setLastPoints(points);
-        setStreak((s) => {
-          const n = s + 1;
-          setBestStreak((b) => Math.max(b, n));
-          return n;
-        });
-        setStatus("SOLVED");
-        setRoundsPlayed((r) => r + 1);
-        setRoundsSolved((r) => r + 1);
-        setRoundHistory((h) => [
-          { song: target, solved: true, attemptsUsed: attemptsUsed + 1, at: Date.now() },
-          ...h,
-        ]);
+      tokenRef.current = started.runToken;
+      saveStoredRun({
+        runId: started.runId,
+        runToken: started.runToken,
+        gameSlug,
+      });
+
+      setRunId(started.runId);
+      setRunStatus("IN_PROGRESS");
+      setRoundIndex(started.roundIndex);
+      setStage(started.stageReached);
+      setLives(started.livesRemaining);
+      setPhase("ready");
+
+      await loadAudio(started.runId, generation);
+    } catch (cause) {
+      if (generation !== generationRef.current) return;
+      setPhase("error");
+      setError(
+        messageFor(
+          cause,
+          "Couldn't start a run. The catalog may be empty — ingest some songs first.",
+        ),
+      );
+    }
+  }, [gameSlug, loadAudio, releaseAudio, resetRoundView]);
+
+  /// Rehydrate from a stored run, or start a new one if there isn't a usable
+  /// one. Runs once on mount.
+  useEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+
+    // No `cancelled` flag here, deliberately. Pairing one with the guard above
+    // is a trap: StrictMode mounts, runs the cleanup (setting cancelled), then
+    // remounts — and the remount hits the guard and returns, so the only
+    // invocation still in flight is one that has been told to discard its
+    // result. Nothing would ever hydrate. generationRef already discards work
+    // that a later begin()/nextRound() has superseded, which is the staleness
+    // that actually matters; a setState after a real unmount is a no-op.
+    async function resumeOrStart() {
+      const stored = loadStoredRun(gameSlug);
+      if (!stored) {
+        void begin();
         return;
       }
 
-      const attempts = attemptsUsed + 1;
-      setAttemptsUsed(attempts);
-      if (attempts >= MAX_ATTEMPTS) {
-        setStatus("FAILED");
-        setStreak(0);
-        setLives((l) => Math.max(0, l - 1));
-        setRoundsPlayed((r) => r + 1);
-        setRoundHistory((h) => [
-          { song: target, solved: false, attemptsUsed: attempts, at: Date.now() },
-          ...h,
-        ]);
+      const generation = ++generationRef.current;
+      tokenRef.current = stored.runToken;
+
+      try {
+        const state = await fetchRunState(stored.runId, stored.runToken);
+        if (generation !== generationRef.current) return;
+
+        // A finished run is not resumable — nothing to guess at.
+        if (state.runStatus !== "IN_PROGRESS" || !state.current) {
+          clearStoredRun();
+          void begin();
+          return;
+        }
+
+        setRunId(state.runId);
+        setRunStatus(state.runStatus);
+        setRoundIndex(state.current.roundIndex);
+        setStage(state.current.stageReached);
+        setAttemptsUsed(state.current.attemptsUsed);
+        setGuesses(
+          state.current.attempts.map((attempt) => ({
+            song: attempt.song,
+            puzzleId: null,
+            correct: attempt.isCorrect,
+            skipped: attempt.isSkip,
+            // The real timestamps aren't in the payload and nothing renders
+            // them for the current round; only roundHistory shows relative time.
+            at: 0,
+          })),
+        );
+        setHint(state.current.hint);
+        setStatus("PENDING");
+        setReveal(null);
+        setLastPoints(null);
+
+        setLives(state.livesRemaining);
+        setScore(state.score);
+        setStreak(state.currentStreak);
+        setBestStreak(state.bestStreak);
+        setRoundsSolved(state.roundsSolved);
+        setRoundsPlayed(state.roundsSolved + state.roundsFailed);
+        setRoundHistory(
+          state.past
+            .filter((round) => round.song !== null)
+            .map((round) => ({
+              song: round.song!,
+              solved: round.outcome === "SOLVED",
+              attemptsUsed: round.attemptsUsed,
+              // Real resolution time from the server. Falling back to 0 here
+              // would render as "496474h ago" — the epoch, not "unknown".
+              at: round.resolvedAt ? Date.parse(round.resolvedAt) : Date.now(),
+            }))
+            // Newest first, matching the order live rounds are prepended in.
+            .reverse(),
+        );
+
+        setPhase("ready");
+        await loadAudio(state.runId, generation);
+      } catch (cause) {
+        if (generation !== generationRef.current) return;
+        // A 404 is the common case: the run expired, or the database was reset
+        // under a token we still had. Either way, start fresh rather than
+        // stranding the player on an error screen.
+        if (cause instanceof ApiError && cause.status === 404) {
+          clearStoredRun();
+          void begin();
+          return;
+        }
+        setPhase("error");
+        setError(messageFor(cause, "Couldn't resume your run."));
+      }
+    }
+
+    void resumeOrStart();
+    // Mount-only: begin/loadAudio are stable, and re-running this on any change
+    // would abandon a live run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameSlug]);
+
+  /// Fold an attempt response into local state.
+  const applyResult = useCallback(
+    (result: AttemptResult, record: GuessRecord) => {
+      setGuesses((previous) => [...previous, record]);
+      setAttemptsUsed(result.attemptsUsed);
+      setStage(result.stageReached);
+      setLives(result.livesRemaining);
+      setRunStatus(result.runStatus);
+      setHint(result.hint);
+
+      if (result.outcome === "PENDING") return;
+
+      // Round resolved. The server has already opened the next one (or finished
+      // the run); the result panel is what the player sees until they advance.
+      setStatus(result.outcome);
+      setReveal(result.reveal);
+      setLastPoints(result.points);
+      setRoundsPlayed((count) => count + 1);
+
+      if (result.points !== null) setScore((current) => current + result.points!);
+
+      if (result.outcome === "SOLVED") {
+        setRoundsSolved((count) => count + 1);
+        // Only a stage-1 solve extends the streak (scoring/v1.ts), so this is
+        // derived rather than incremented blindly.
+        setStreak((current) => {
+          const next = result.stageReached === 1 ? current + 1 : 0;
+          setBestStreak((best) => Math.max(best, next));
+          return next;
+        });
       } else {
-        setStage((s) => s + 1);
+        setStreak(0);
+      }
+
+      if (result.reveal) {
+        setRoundHistory((history) => [
+          {
+            song: result.reveal!,
+            solved: result.outcome === "SOLVED",
+            attemptsUsed: result.attemptsUsed,
+            at: Date.now(),
+          },
+          ...history,
+        ]);
       }
     },
-    [status, target, stage, attemptsUsed, streak],
+    [],
   );
 
-  const hint = useMemo(() => {
-    if (attemptsUsed < 2) return null;
-    const decade = `${Math.floor(target.year / 10) * 10}s`;
-    if (attemptsUsed < 4) return { decade, genre: target.genre };
-    return {
-      decade,
-      genre: target.genre,
-      firstLetter: target.title[0].toUpperCase(),
-    };
-  }, [attemptsUsed, target]);
+  const guess = useCallback(
+    async (match: CatalogMatch) => {
+      const id = runId;
+      const token = tokenRef.current;
+      if (!id || !token || pending || status !== "PENDING") return;
+
+      const generation = generationRef.current;
+      setPending(true);
+      try {
+        const result = await submitGuess(id, token, {
+          guessedPuzzleId: match.puzzleId,
+          rawInput: `${match.title} — ${match.artist}`,
+          idempotencyKey: newIdempotencyKey(),
+        });
+        if (generation !== generationRef.current) return;
+
+        applyResult(result, {
+          song: { title: match.title, artist: match.artist },
+          puzzleId: match.puzzleId,
+          correct: result.outcome === "SOLVED",
+          skipped: false,
+          at: Date.now(),
+        });
+
+        if (result.outcome === "PENDING") await loadAudio(id, generation);
+        else await loadRevealAudio(id, generation);
+      } catch (cause) {
+        if (generation !== generationRef.current) return;
+        setError(messageFor(cause, "That guess didn't go through."));
+      } finally {
+        setPending(false);
+      }
+    },
+    [runId, pending, status, applyResult, loadAudio, loadRevealAudio],
+  );
+
+  const skip = useCallback(async () => {
+    const id = runId;
+    const token = tokenRef.current;
+    if (!id || !token || pending || status !== "PENDING") return;
+
+    const generation = generationRef.current;
+    setPending(true);
+    try {
+      const result = await skipRound(id, token, newIdempotencyKey());
+      if (generation !== generationRef.current) return;
+
+      applyResult(result, {
+        song: null,
+        puzzleId: null,
+        correct: false,
+        skipped: true,
+        at: Date.now(),
+      });
+
+      if (result.outcome === "PENDING") await loadAudio(id, generation);
+      else await loadRevealAudio(id, generation);
+    } catch (cause) {
+      if (generation !== generationRef.current) return;
+      setError(messageFor(cause, "That skip didn't go through."));
+    } finally {
+      setPending(false);
+    }
+  }, [runId, pending, status, applyResult, loadAudio, loadRevealAudio]);
+
+  /// Move to the round the server already opened when this one resolved. If the
+  /// run itself finished, this starts a new one.
+  const nextRound = useCallback(async () => {
+    if (runStatus !== "IN_PROGRESS") {
+      await begin();
+      return;
+    }
+
+    const id = runId;
+    if (!id) return;
+
+    const generation = ++generationRef.current;
+    resetRoundView();
+    setRoundIndex((index) => index + 1);
+    releaseAudio();
+    setAudioUrl(null);
+    await loadAudio(id, generation);
+  }, [runStatus, runId, begin, resetRoundView, releaseAudio, loadAudio]);
+
+  const restartRun = useCallback(() => {
+    void begin();
+  }, [begin]);
+
+  const revealMs = revealLadder[stage - 1] ?? revealLadder[0] ?? 0;
+  const totalMs = revealLadder[revealLadder.length - 1] ?? 0;
 
   return {
-    target,
+    phase,
+    error,
+    dismissError: useCallback(() => setError(null), []),
+
+    runId,
+    runStatus,
+    roundIndex,
     stage,
     attemptsUsed,
-    attemptsRemaining: MAX_ATTEMPTS - attemptsUsed,
+    attemptsRemaining: maxAttempts - attemptsUsed,
     revealMs,
+    totalMs,
+    revealLadder,
+    maxAttempts,
     guesses,
     status,
+    hint,
+    reveal,
+    lastPoints,
+
     lives,
     streak,
     bestStreak,
     score,
-    lastPoints,
     roundsPlayed,
     roundsSolved,
     roundHistory,
-    hint,
-    submitGuess,
+
+    audioUrl,
+    audioLoading,
+    revealAudioUrl,
+    revealAudioLoading,
+    pending,
+
+    guess,
+    skip,
     nextRound,
     restartRun,
   };
+}
+
+/// Prefer the server's message — "No playable puzzles are available right now."
+/// is far more useful than a generic failure, and the API only ever returns
+/// messages that are safe to show.
+function messageFor(cause: unknown, fallback: string): string {
+  if (cause instanceof ApiError) return cause.message;
+  return fallback;
 }

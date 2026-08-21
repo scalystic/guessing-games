@@ -1,0 +1,47 @@
+{
+  "gameSlug": "songless",
+  "tracks": [
+    {
+      "file": "masters/tujhe-dekha-to.mp3",
+      "title": "Tujhe Dekha To",
+      "artist": "Lata Mangeshkar, Kumar Sanu",
+      "album": "Dilwale Dulhania Le Jayenge",
+      "releaseYear": 1995,
+      "genres": ["Romantic"],
+      "aliases": ["Tujhe Dekha To Ye Jana Sanam"],
+      "hookStartMs": 0,
+      "seedPopularity": 92,
+      "licenseSource": "REPLACE-ME: label/aggregator + agreement ref",
+      "ingestSource": "manual",
+      "ingestRef": "tujhe-dekha-to"
+    },
+    {
+      "file": "masters/kesariya.mp3",
+      "title": "Kesariya",
+      "artist": "Arijit Singh",
+      "album": "Brahmastra",
+      "releaseYear": 2022,
+      "genres": ["Romantic"],
+      "aliases": [],
+      "hookStartMs": 18500,
+      "seedPopularity": 74,
+      "licenseSource": "REPLACE-ME: label/aggregator + agreement ref",
+      "ingestSource": "manual",
+      "ingestRef": "kesariya"
+    },
+    {
+      "file": "masters/barso-re.mp3",
+      "title": "Barso Re",
+      "artist": "Shreya Ghoshal",
+      "album": "Guru",
+      "releaseYear": 2007,
+      "genres": ["Monsoon"],
+      "aliases": ["Barso Re Megha"],
+      "hookStartMs": 32000,
+      "seedPopularity": 55,
+      "licenseSource": "REPLACE-ME: label/aggregator + agreement ref",
+      "ingestSource": "manual",
+      "ingestRef": "barso-re"
+    }
+  ]
+}

@@ -43,3 +43,9 @@ next-env.d.ts
 
 # prisma generated client
 /src/generated/prisma
+
+# ingest — licensed master audio and the real manifests describing it stay local
+/ingest/masters/
+/ingest/out/
+/ingest/*.json
+!/ingest/manifest.example.json
