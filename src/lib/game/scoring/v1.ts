@@ -19,7 +19,7 @@ const STAGE_BASE = [1000, 800, 600, 400, 250, 100];
 /// because 10 rounds have to cover the same popularity span.
 const DEPTH_BONUS_PER_ROUND = 0.05;
 
-/// First-stage solves only. Capped so a hot streak can't dominate the board.
+/// Per consecutive solve. Capped so a hot streak can't dominate the board.
 const STREAK_BONUS_PER_SOLVE = 0.1;
 const STREAK_BONUS_CAP = 0.5;
 
@@ -34,7 +34,7 @@ export type ScoreInput = {
   stageReached: number;
   /// 1-based round index within the run.
   roundIndex: number;
-  /// Consecutive first-stage solves BEFORE this round.
+  /// Consecutive solves BEFORE this round.
   currentStreak: number;
   attemptsUsed: number;
   maxAttempts: number;
@@ -63,8 +63,17 @@ export function scoreSolvedRound(input: ScoreInput): ScoreResult {
   };
 }
 
-/// Whether a solve at this stage extends the streak. Only a first-stage solve
-/// counts — the streak multiplier rewards instant recognition, not persistence.
-export function solveExtendsStreak(stageReached: number): boolean {
-  return stageReached === 1;
+/// Whether a solve extends the streak. Every solve does, at whatever stage.
+///
+/// This used to require a first-stage solve, which made the counter unreadable:
+/// naming a song from 200ms is rare, so a player solving four in a row off the
+/// 1.2s clip watched "Streak 0" the whole way and read it as broken. A streak is
+/// the one number on the board that has to mean the obvious thing — songs solved
+/// back to back. Solving late is already priced in by STAGE_BASE.
+///
+/// Still a function rather than an inlined `+ 1` at the call site: this is the
+/// scoring version's rule, and it is where a stage condition goes back if the
+/// streak bonus ever needs tightening.
+export function solveExtendsStreak(): boolean {
+  return true;
 }

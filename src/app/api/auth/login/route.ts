@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
 import { createSession } from "@/lib/session";
+import { claimGuestProgress } from "@/lib/auth/merge-guest";
 import { LoginSchema } from "@/lib/auth/validation";
 import { jsonError, jsonOk, internalErrorJson } from "@/lib/api/response";
 
@@ -36,10 +37,16 @@ export async function POST(request: Request): Promise<Response> {
       return jsonError(401, "invalid_credentials", "Invalid email or password.");
     }
 
+    // Carry the current guest's progress across before the session flips.
+    const merge = await claimGuestProgress(
+      player.id,
+      "Guest progress merged into existing account at login.",
+    );
+
     // Create session
     await createSession(player.id, "USER");
 
-    return jsonOk({ playerId: player.id });
+    return jsonOk({ playerId: player.id, guestMerge: merge });
   } catch (error) {
     return internalErrorJson("auth.login", error);
   }

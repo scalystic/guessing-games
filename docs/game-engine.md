@@ -11,7 +11,7 @@ every game and every mode; a game is configuration, a mode is a flag on `Run`.
 | **Reveal stage** | How much of the puzzle is unlocked. Stage 1 = 0.2s, stage 6 = 7s. Cumulative. |
 | **Attempt** | A guess or a skip. Both advance the stage. 6 per puzzle. |
 | **Round** | One puzzle inside a run. |
-| **Run** | One sitting. Daily = 10 rounds, 3 lives. Practice/endless = unbounded, 3 lives. |
+| **Run** | One sitting. Daily = 10 rounds, 3 lives, and a third miss ends it. Practice/endless = unbounded; lives are counted but never end the run. |
 
 **There are no difficulty tiers.** One daily challenge, ten songs, same set for
 everyone — nothing to pick before you play. The ladder, attempt count, and answer
@@ -26,8 +26,9 @@ a run and comes from two places only: which slice of the catalog is sampled
 stateDiagram-v2
     [*] --> IN_PROGRESS: POST /api/runs
     IN_PROGRESS --> IN_PROGRESS: round solved, more rounds remain
-    IN_PROGRESS --> COMPLETED: livesRemaining hits 0
+    IN_PROGRESS --> COMPLETED: livesRemaining hits 0 (daily only)
     IN_PROGRESS --> COMPLETED: roundIndex > maxRounds (daily only)
+    IN_PROGRESS --> COMPLETED: no eligible puzzle left to sample
     IN_PROGRESS --> ABANDONED: POST /api/runs/:id/abandon
     IN_PROGRESS --> EXPIRED: sweeper, expiresAt passed
     COMPLETED --> [*]: finalize → score, XP, boards
@@ -40,6 +41,12 @@ that runs out of lives at round 7 still completes — it just scores less. Quitt
 mid-run is `ABANDONED` and scores nothing, which is what stops daily players from
 rerolling a bad start.
 
+**Lives only end a `DAILY` run.** A bounded attempt is the whole point of the
+daily; practice is the opposite. Completing a practice run is not cheap either:
+score, streak and round history are all `Run` columns, so the client has nothing
+to show afterwards but a fresh run's zeroes — a three-miss game over reads as the
+app wiping itself. Practice keeps counting misses and keeps going.
+
 ## Round lifecycle
 
 ```mermaid
@@ -49,7 +56,7 @@ stateDiagram-v2
     PENDING --> SOLVED: correct guess
     PENDING --> FAILED: attempt 6 used, still unsolved
     SOLVED --> [*]: points awarded, next round
-    FAILED --> [*]: livesRemaining - 1
+    FAILED --> [*]: livesRemaining - 1 (floored at 0)
 ```
 
 ## Transitions
@@ -62,7 +69,7 @@ Every row is one server transaction over a row-locked `Run`.
 | `guess` (correct) | run `IN_PROGRESS`, round `PENDING`, `attemptsUsed < maxAttempts`, idempotency key unused | round → `SOLVED`, award points/XP, `currentStreak++`, advance cursor or finalize |
 | `guess` (wrong) | same | `attemptsUsed++`; if `< maxAttempts` → `stageReached++`, return next asset; else round → `FAILED` |
 | `skip` | same | identical to a wrong guess, recorded with `isSkip = true` |
-| round → `FAILED` | — | `livesRemaining--`, `currentStreak = 0`; if lives 0 → finalize run |
+| round → `FAILED` | — | `livesRemaining--` (floored at 0), `currentStreak = 0`; if lives 0 **and** mode is `DAILY` → finalize run |
 | `abandon` | run `IN_PROGRESS` | run → `ABANDONED`, `endedAt` set, no board write |
 | sweeper | `expiresAt < now()`, still `IN_PROGRESS` | run → `EXPIRED` |
 
@@ -160,7 +167,7 @@ Formula lives in code (`src/lib/game/scoring/v1.ts`), pinned per run by
 ```
 stageBase   = [1000, 800, 600, 400, 250, 100][stageReached - 1]
 depthBonus  = 1 + 0.05 * (roundIndex - 1)           // round 10 is worth 1.45x
-streakBonus = 1 + min(0.10 * currentStreak, 0.50)   // first-stage solves only
+streakBonus = 1 + min(0.10 * currentStreak, 0.50)   // consecutive solves, any stage
 
 points = round(stageBase * depthBonus * streakBonus)
 xp     = 10 + 4 * (maxAttempts - attemptsUsed)

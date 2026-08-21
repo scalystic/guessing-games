@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { createSession, deleteSession, getSession } from "@/lib/session";
+import { claimGuestProgress } from "@/lib/auth/merge-guest";
 import {
   SignupSchema,
   LoginSchema,
@@ -171,7 +172,14 @@ export async function login(
     return { message: "Invalid email or password." };
   }
 
-  // 4. Create session
+  // 4. Carry the current guest's progress into the account before the session
+  // flips — after createSession there is no guest left to read.
+  await claimGuestProgress(
+    player.id,
+    "Guest progress merged into existing account at login.",
+  );
+
+  // 5. Create session
   await createSession(player.id, "USER");
 
   redirect("/");

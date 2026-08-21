@@ -33,6 +33,11 @@ export type AttemptResult = {
   livesRemaining: number;
   runStatus: "IN_PROGRESS" | "COMPLETED" | "ABANDONED" | "EXPIRED";
   roundIndex: number;
+  /// Run totals AFTER this attempt. Reported rather than left to the client to
+  /// re-derive: the streak rule lives in scoring/v1.ts, and a second copy of it
+  /// in the hook is a copy that drifts.
+  currentStreak: number;
+  bestStreak: number;
   /// Null while PENDING.
   points: number | null;
   /// Revealed only once the round resolves.
@@ -74,6 +79,7 @@ export async function applyAttempt(input: AttemptInput): Promise<AttemptResult> 
       select: {
         id: true,
         status: true,
+        mode: true,
         currentRoundIndex: true,
         livesRemaining: true,
         maxRounds: true,
@@ -181,6 +187,8 @@ export async function applyAttempt(input: AttemptInput): Promise<AttemptResult> 
       livesRemaining: run.livesRemaining,
       runStatus: "IN_PROGRESS",
       roundIndex: round.roundIndex,
+      currentStreak: run.currentStreak,
+      bestStreak: run.bestStreak,
       points: null,
       reveal: null,
       hint: await hintFor(tx, round.puzzleId, updated.attemptsUsed),
@@ -213,11 +221,27 @@ async function hintFor(
   return song ? deriveHint(song, attemptsUsed) : null;
 }
 
+/// Whether running out of lives ends the run.
+///
+/// Only DAILY, where a bounded attempt IS the format. PRACTICE and ENDLESS are
+/// open-ended, and completing one of those runs is not a small thing: the
+/// streak, the score and the played-songs list are all columns on Run, so the
+/// client has no choice but to start a fresh run and draw zeroes. Three misses
+/// used to wipe a practice session that way — which reads as the app resetting
+/// itself, not as a game over. Lives are still tracked and still shown; they
+/// just don't terminate an open-ended run.
+function livesEndTheRun(mode: RunMode): boolean {
+  return mode === "DAILY";
+}
+
+type RunMode = "DAILY" | "PRACTICE" | "ENDLESS";
+
 type ResolveArgs = {
   run: {
     id: string;
     playerId: string;
     gameId: string;
+    mode: RunMode;
     livesRemaining: number;
     maxRounds: number | null;
     currentRoundIndex: number;
@@ -248,8 +272,7 @@ async function resolveSolved(tx: Tx, args: ResolveArgs): Promise<AttemptResult> 
     maxAttempts: run.game.maxAttempts,
   });
 
-  const extends_ = solveExtendsStreak(round.stageReached);
-  const nextStreak = extends_ ? run.currentStreak + 1 : 0;
+  const nextStreak = solveExtendsStreak() ? run.currentStreak + 1 : 0;
 
   await tx.runRound.update({
     where: { id: round.id },
@@ -311,7 +334,9 @@ async function resolveFailed(tx: Tx, args: ResolveArgs): Promise<AttemptResult> 
     revealMs,
     solved: false,
     nextStreak: 0,
-    livesRemaining: run.livesRemaining - 1,
+    // Floored rather than allowed to go negative: an open-ended run keeps
+    // playing past zero, and a run of -4 lives is a number nothing can render.
+    livesRemaining: Math.max(0, run.livesRemaining - 1),
   });
 }
 
@@ -328,8 +353,9 @@ async function advance(
 ): Promise<AttemptResult> {
   const { run, round, attemptIndex, revealMs, livesRemaining, nextStreak } = args;
 
-  const outOfLives = livesRemaining <= 0;
+  const outOfLives = livesEndTheRun(run.mode) && livesRemaining <= 0;
   const roundsExhausted = run.maxRounds !== null && round.roundIndex >= run.maxRounds;
+  const bestStreak = Math.max(run.bestStreak, nextStreak);
 
   const reveal = await tx.song.findUnique({
     where: { puzzleId: round.puzzleId },
@@ -347,7 +373,7 @@ async function advance(
         version: { increment: 1 },
         livesRemaining: Math.max(0, livesRemaining),
         currentStreak: nextStreak,
-        bestStreak: Math.max(run.bestStreak, nextStreak),
+        bestStreak,
         score: { increment: args.scoreDelta },
         xpEarned: { increment: args.xpDelta },
         roundsSolved: args.solved ? { increment: 1 } : undefined,
@@ -365,6 +391,8 @@ async function advance(
       livesRemaining: Math.max(0, livesRemaining),
       runStatus: "COMPLETED",
       roundIndex: round.roundIndex,
+      currentStreak: nextStreak,
+      bestStreak,
       points: args.scoreDelta,
       reveal: reveal ?? null,
       // The round is over; `reveal` says everything a hint would have.
@@ -399,7 +427,7 @@ async function advance(
         version: { increment: 1 },
         livesRemaining,
         currentStreak: nextStreak,
-        bestStreak: Math.max(run.bestStreak, nextStreak),
+        bestStreak,
         score: { increment: args.scoreDelta },
         xpEarned: { increment: args.xpDelta },
         roundsSolved: args.solved ? { increment: 1 } : undefined,
@@ -417,6 +445,8 @@ async function advance(
       livesRemaining,
       runStatus: "COMPLETED",
       roundIndex: round.roundIndex,
+      currentStreak: nextStreak,
+      bestStreak,
       points: args.scoreDelta,
       reveal: reveal ?? null,
       hint: null,
@@ -440,7 +470,7 @@ async function advance(
       version: { increment: 1 },
       livesRemaining,
       currentStreak: nextStreak,
-      bestStreak: Math.max(run.bestStreak, nextStreak),
+      bestStreak,
       score: { increment: args.scoreDelta },
       xpEarned: { increment: args.xpDelta },
       roundsSolved: args.solved ? { increment: 1 } : undefined,
@@ -459,6 +489,8 @@ async function advance(
     livesRemaining,
     runStatus: "IN_PROGRESS",
     roundIndex: round.roundIndex,
+    currentStreak: nextStreak,
+    bestStreak,
     points: args.scoreDelta,
     reveal: reveal ?? null,
     // The round just resolved. The NEXT round starts at attempt 0, which earns
@@ -489,6 +521,8 @@ async function describeCurrentState(tx: Tx, runId: string): Promise<AttemptResul
       status: true,
       currentRoundIndex: true,
       livesRemaining: true,
+      currentStreak: true,
+      bestStreak: true,
       game: { select: { maxAttempts: true } },
     },
   });
@@ -514,6 +548,8 @@ async function describeCurrentState(tx: Tx, runId: string): Promise<AttemptResul
     livesRemaining: run.livesRemaining,
     runStatus: run.status,
     roundIndex: round?.roundIndex ?? run.currentRoundIndex,
+    currentStreak: run.currentStreak,
+    bestStreak: run.bestStreak,
     // RunRound.points defaults to 0, so read it only once the round has actually
     // resolved — otherwise a replayed attempt reports a score for a live round.
     points: round && round.outcome !== "PENDING" ? round.points : null,

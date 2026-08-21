@@ -48,6 +48,10 @@ export type AttemptResult = {
   livesRemaining: number;
   runStatus: RunStatus;
   roundIndex: number;
+  /// Run totals AFTER this attempt. Authoritative — the streak rule is a server
+  /// rule, so the client reports these rather than recomputing them.
+  currentStreak: number;
+  bestStreak: number;
   points: number | null;
   reveal: Reveal | null;
   hint: RoundHint | null;

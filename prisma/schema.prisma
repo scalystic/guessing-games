@@ -381,7 +381,7 @@ model Run {
   xpEarned     Int @default(0)
   roundsSolved Int @default(0)
   roundsFailed Int @default(0)
-  /// Consecutive first-stage solves — the in-run streak multiplier input.
+  /// Consecutive solves, at any stage — the in-run streak multiplier input.
   currentStreak Int @default(0)
   bestStreak    Int @default(0)
   /// Total audio unlocked across the run, in ms. Leaderboard tie-break.

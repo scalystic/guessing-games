@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { decodeJwt } from "jose";
 import { prisma } from "@/lib/db";
 import { createSession, getSession } from "@/lib/session";
+import { claimGuestProgress } from "@/lib/auth/merge-guest";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -98,10 +99,13 @@ export async function GET(request: Request) {
         });
       }
 
-      // If they had a guest session, should we merge? 
-      // Typically if a user logs into an EXISTING account, the guest progress is lost
-      // unless we build a complex conflict-resolution flow. We'll stick to the standard:
-      // Logging into an existing account abandons the current guest session.
+      // Signing in to an existing account still carries the guest's progress
+      // across: runs, puzzle history, balances and board placements all fold
+      // into the account, and the guest row stays as the claim receipt.
+      await claimGuestProgress(
+        player.id,
+        "Guest progress merged into existing account via Google sign-in.",
+      );
 
       await createSession(player.id, "USER");
       redirect("/");

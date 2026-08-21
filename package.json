@@ -19,6 +19,7 @@
     "db:seed": "prisma db seed",
     "ingest": "tsx scripts/ingest.ts",
     "create-admin": "tsx scripts/create-admin.ts",
+    "hooks": "tsx scripts/detect-hooks.ts",
     "verify:storage": "tsx scripts/verify-storage.ts",
     "db:reset": "prisma migrate reset --force",
     "db:studio": "prisma studio",

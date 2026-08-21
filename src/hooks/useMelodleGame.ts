@@ -220,7 +220,12 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
     releaseAudio();
     setAudioUrl(null);
     resetRoundView();
-    setRoundHistory([]);
+    // roundHistory is deliberately NOT cleared. Everything else here is a Run
+    // column and has to go back to what the new run says, but the played-songs
+    // list is a record of this visit — a run ending (catalog exhausted, or the
+    // player hitting "Play Now") is not a reason for songs they just heard to
+    // vanish off the bottom of the screen. A resume replaces it wholesale from
+    // the server, so it can't drift into a duplicate of the run's own rounds.
     setRoundsPlayed(0);
     setRoundsSolved(0);
     setScore(0);
@@ -366,6 +371,11 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
       setLives(result.livesRemaining);
       setRunStatus(result.runStatus);
       setHint(result.hint);
+      // Server-owned, both of them. The streak rule (scoring/v1.ts) is not
+      // re-implemented here — this hook used to derive it from `stageReached`
+      // and quietly disagreed with the run the moment that rule changed.
+      setStreak(result.currentStreak);
+      setBestStreak(result.bestStreak);
 
       if (result.outcome === "PENDING") return;
 
@@ -378,18 +388,7 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
 
       if (result.points !== null) setScore((current) => current + result.points!);
 
-      if (result.outcome === "SOLVED") {
-        setRoundsSolved((count) => count + 1);
-        // Only a stage-1 solve extends the streak (scoring/v1.ts), so this is
-        // derived rather than incremented blindly.
-        setStreak((current) => {
-          const next = result.stageReached === 1 ? current + 1 : 0;
-          setBestStreak((best) => Math.max(best, next));
-          return next;
-        });
-      } else {
-        setStreak(0);
-      }
+      if (result.outcome === "SOLVED") setRoundsSolved((count) => count + 1);
 
       if (result.reveal) {
         setRoundHistory((history) => [
