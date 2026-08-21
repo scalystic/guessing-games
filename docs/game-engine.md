@@ -75,9 +75,17 @@ stage 6, not a formality.
    title, no artist in any response until `outcome != PENDING`. The typeahead is
    backed by a catalog-wide search endpoint that has no idea what the current
    round is.
-2. **Asset URLs are issued one stage at a time**, signed, TTL ~60s, scoped to the
-   run. `PuzzleAsset.storageKey` is never public and clips are cumulative, so a
-   scrubbable full track never reaches the browser.
+2. **Audio is one stored object, sliced per stage on the way out.** A puzzle has a
+   single `AUDIO_CLIP` covering the full reveal window (7s), and the stage-N
+   response is a byte-range prefix of it — `bytes=0-(stageByteOffsets[N-1] - 1)`,
+   with the offsets precomputed at ingest. The client is never handed a longer
+   buffer than it earned, so there is nothing to scrub ahead into. Two
+   consequences that are easy to get wrong:
+   - **The clip must be CBR MP3**, not AAC-in-MP4. A truncated MP3 is a valid MP3
+     (self-describing frames, no global index); a truncated MP4 will not decode.
+   - **`storageKey` must be content-addressed** (use `checksum`). The route
+     proxies the range rather than redirecting, but if you ever do sign a direct
+     URL, a key like `blank-space-taylor-swift.mp3` *is* the answer.
 3. **The client does not send `roundIndex`.** `guess` and `skip` act on
    `Run.currentRoundIndex`. Old rounds are unreachable by construction.
 4. **The client does not send stage, attempt number, or score.** All derived from
@@ -247,7 +255,8 @@ for display — never treated as truth.
 ## v1 scope
 
 **Ship:** `DAILY` (10 songs) + `PRACTICE`, one board per day, guest play,
-server-authoritative rounds, cumulative clips on CDN, XP/level, share card.
+server-authoritative rounds, one 7s clip per puzzle range-sliced per stage,
+XP/level, share card.
 
 **Schema present but unwired:** `ENDLESS`, `HintUsage`, coins, streak freezes,
 weekly/all-time boards.

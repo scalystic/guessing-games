@@ -17,12 +17,15 @@
     "db:push:force": "prisma db push --accept-data-loss",
     "db:pull": "prisma db pull",
     "db:seed": "prisma db seed",
+    "ingest": "tsx scripts/ingest.ts",
+    "verify:storage": "tsx scripts/verify-storage.ts",
     "db:reset": "prisma migrate reset --force",
     "db:studio": "prisma studio",
     "db:validate": "prisma validate",
     "db:format": "prisma format"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1115.0",
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
     "bcryptjs": "^3.0.3",

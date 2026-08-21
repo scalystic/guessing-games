@@ -121,6 +121,10 @@ model Game {
   /// Cumulative reveal ladder in ms: [200, 700, 1200, 2200, 4000, 7000].
   /// Length must equal maxAttempts. Validated at ingest, not by the DB.
   revealLadder Json
+  /// Bump whenever revealLadder changes. PuzzleAsset.stageByteOffsets carries the
+  /// revision it was cut against, so a mismatch is a detectable "recompute me"
+  /// rather than silently serving clips of the wrong length.
+  ladderRevision Int @default(1)
 
   /// The difficulty curve, as data. Round 1 targets startPopularity; each later
   /// round subtracts rampPerRound, floored at minPopularity so a deep run can't
@@ -203,25 +207,47 @@ enum AssetKind {
   TEXT_SNIPPET
 }
 
-/// One row per reveal stage. Assets are CUMULATIVE (stage 3 = 0–1.2s), so the
-/// client swaps source on unlock and never holds audio it hasn't earned.
-/// storageKey is private; URLs are signed per request with a short TTL.
+/// ONE row per puzzle per asset kind. For songless that means a single
+/// AUDIO_CLIP holding the whole reveal window (max(Game.revealLadder), 7s today)
+/// plus an IMAGE for the post-resolve artwork.
+///
+/// There is no per-stage row and no per-stage upload: the ladder is served by
+/// byte-range slicing this one file (see stageByteOffsets). Stage N is a prefix
+/// of the same object, which is why a prefix has to be independently decodable —
+/// store CBR MP3, not AAC-in-MP4, or a truncated response won't play.
+///
+/// storageKey is private and MUST be content-addressed (use checksum), never
+/// derived from title/artist — a signed URL is visible to the client, so a
+/// human-readable key hands over the answer.
 model PuzzleAsset {
   id       String @id @default(cuid())
   puzzleId String
-  /// 1..Game.maxAttempts
-  stage    Int
 
   kind       AssetKind
   storageKey String
   mimeType   String?
+  /// Full length of the stored clip. For AUDIO_CLIP this should equal
+  /// max(Game.revealLadder) — the stage-6 reveal IS the whole file.
   durationMs Int?
   byteSize   Int?
   checksum   String?
 
+  /// AUDIO_CLIP only. Frame-aligned exclusive end offset per reveal stage,
+  /// computed at ingest against Game.revealLadder. Serving stage N is
+  /// `bytes=0-(stageByteOffsets[N-1] - 1)`; the last entry equals byteSize.
+  /// Precomputed rather than derived at request time because CBR MP3 frames
+  /// alternate size via the padding bit, so ms→byte math is not exact.
+  stageByteOffsets Int[]
+  /// Which Game.ladderRevision these offsets were cut against. If it drifts from
+  /// the game's current value the offsets are stale and must be recomputed —
+  /// a frame-header scan, no re-encode and no re-upload.
+  ladderRevision   Int   @default(1)
+
   puzzle Puzzle @relation(fields: [puzzleId], references: [id], onDelete: Cascade)
 
-  @@unique([puzzleId, stage])
+  /// One asset per kind. A future game needing multiple images per puzzle
+  /// (blurred frames) reintroduces a discriminator here; audio never will.
+  @@unique([puzzleId, kind])
 }
 
 /// Songless detail table. 1:1 with Puzzle — puzzleId IS the primary key.
@@ -253,7 +279,11 @@ model Song {
   puzzle Puzzle @relation(fields: [puzzleId], references: [id], onDelete: Cascade)
 
   @@index([artist])
-  @@index([searchText])
+  /// Trigram GIN, not btree — the typeahead matches on substrings and
+  /// similarity, which a btree can't serve. Declared here rather than left to a
+  /// raw migration so Prisma keeps managing it; the pg_trgm extension it depends
+  /// on IS raw (see 20260821010000_song_searchtext_trigram).
+  @@index([searchText(ops: raw("gin_trgm_ops"))], type: Gin)
 }
 
 // ============================================================
