@@ -1,9 +1,6 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import Link from "next/link";
-import { getSession } from "@/lib/session";
-import { prisma } from "@/lib/db";
-import UserNav from "@/app/components/user-nav";
+import { Geist, Geist_Mono, Poppins } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -14,6 +11,14 @@ const geistSans = Geist({
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+});
+
+// Bold geometric sans for branding/headings — swapped in for a cleaner,
+// more modern feel than the earlier serif display face.
+const poppins = Poppins({
+  variable: "--font-display",
+  subsets: ["latin"],
+  weight: ["700", "800", "900"],
 });
 
 export const metadata: Metadata = {
@@ -28,46 +33,27 @@ export const metadata: Metadata = {
   description: "Daily guessing games. One clip, six attempts.",
 };
 
-async function getUser() {
-  const session = await getSession();
-  if (!session) return null;
+// Applies the saved light/dark choice before first paint — avoids both a
+// flash of the wrong theme and a hydration mismatch, since React never
+// renders a value that depends on this; it just finds the class already
+// there. See src/lib/theme-mode.ts for the toggle that writes it.
+const THEME_INIT_SCRIPT = `(function(){try{var m=localStorage.getItem('sargam-theme-mode');document.documentElement.classList.toggle('dark',m!=='light');}catch(e){document.documentElement.classList.add('dark');}})();`;
 
-  const player = await prisma.player.findUnique({
-    where: { id: session.playerId },
-    select: { displayName: true, kind: true },
-  });
-
-  if (!player) return null;
-
-  return { displayName: player.displayName, kind: player.kind };
-}
-
-export default async function RootLayout({ children }: LayoutProps<"/">) {
-  const user = await getUser();
-
+export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
+      className={`${geistSans.variable} ${geistMono.variable} ${poppins.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
-        <header className="sticky top-0 z-50 border-b border-black/[.06] bg-white/80 backdrop-blur-lg dark:border-white/[.08] dark:bg-black/80">
-          <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-6">
-            <Link
-              href="/"
-              className="flex items-center gap-2 text-sm font-semibold tracking-tight text-black dark:text-zinc-50"
-            >
-              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-violet-500 to-fuchsia-500 text-xs font-bold text-white">
-                G
-              </span>
-              Guessing Games
-            </Link>
-            <UserNav user={user} />
-          </div>
-        </header>
+      <body className="min-h-full flex flex-col bg-(--bg) text-(--text)">
+        <Script
+          id="theme-init"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }}
+        />
         <main className="flex-1">{children}</main>
       </body>
     </html>
   );
 }
-
