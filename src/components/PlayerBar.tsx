@@ -188,7 +188,7 @@ export function PlayerBar({ song, revealMs, accent, locked }: Props) {
                 key={i}
                 className="min-h-[10%] flex-1 rounded-full transition-colors duration-150"
                 style={{
-                  height: `${bar.heightPct}%`,
+                  height: `${bar.heightPct.toFixed(2)}%`,
                   background: lit
                     ? accent
                     : withinUnlocked

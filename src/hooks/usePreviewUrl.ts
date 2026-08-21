@@ -26,24 +26,30 @@ function primaryArtist(artist: string) {
 const cache = new Map<string, string | null>();
 
 export function usePreviewUrl(song: Song) {
-  const cachedUrl = cache.get(song.id);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(cachedUrl ?? null);
-  const [status, setStatus] = useState<PreviewStatus>(
-    cachedUrl === undefined ? "loading" : cachedUrl ? "ready" : "unavailable",
-  );
+  // Initial state must be hydration-safe: the `cache` Map is a client-only
+  // side channel (only ever written to from this effect), so its server-side
+  // copy and the client's can disagree. Always start from the same
+  // deterministic value on both, and let the effect below (client-only,
+  // post-hydration) pick up whatever the cache already knows.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [status, setStatus] = useState<PreviewStatus>("loading");
 
   // Reset for the new song during render — the effect below only ever
   // calls setState from its async callback, never synchronously in its body.
   const [lastSongId, setLastSongId] = useState(song.id);
   if (lastSongId !== song.id) {
     setLastSongId(song.id);
-    const nextCached = cache.get(song.id);
-    setPreviewUrl(nextCached ?? null);
-    setStatus(nextCached === undefined ? "loading" : nextCached ? "ready" : "unavailable");
+    setPreviewUrl(null);
+    setStatus("loading");
   }
 
   useEffect(() => {
-    if (cache.has(song.id)) return;
+    const cached = cache.get(song.id);
+    if (cached !== undefined) {
+      setPreviewUrl(cached);
+      setStatus(cached ? "ready" : "unavailable");
+      return;
+    }
 
     let cancelled = false;
     const query = `${song.title} ${primaryArtist(song.artist)}`;
