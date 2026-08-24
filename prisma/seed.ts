@@ -23,7 +23,7 @@ const MAX_ATTEMPTS = 6
 
 /// Cumulative ms of audio unlocked at each stage. Length MUST equal
 /// MAX_ATTEMPTS — the DB can't enforce it, so we check before writing.
-const REVEAL_LADDER = [200, 700, 1200, 2200, 4000, 7000]
+const REVEAL_LADDER = [400, 700, 1200, 2200, 4000, 7000]
 
 /// Rounds in the daily challenge. Everyone plays the same 10 songs.
 const DAILY_ROUNDS = 10

@@ -21,6 +21,7 @@
     "create-admin": "tsx scripts/create-admin.ts",
     "hooks": "tsx scripts/detect-hooks.ts",
     "verify:storage": "tsx scripts/verify-storage.ts",
+    "reslice": "tsx scripts/reslice-ladder.ts",
     "db:reset": "prisma migrate reset --force",
     "db:studio": "prisma studio",
     "db:validate": "prisma validate",

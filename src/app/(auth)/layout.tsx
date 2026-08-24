@@ -22,13 +22,12 @@ export default function AuthLayout({
           className="mb-8 flex items-center justify-center gap-2.5"
         >
           <span
-            className="flex h-10 w-10 items-center justify-center rounded-full text-xl text-black shadow-lg"
-            style={{ background: `linear-gradient(135deg, ${theme.from}, ${theme.to})` }}
-          >
-            🎬
-          </span>
+            className="h-10 w-10 rounded-xl bg-cover bg-center shadow-lg"
+            style={{ backgroundImage: "url('/brand/cluecade-mark.png')" }}
+            aria-hidden="true"
+          />
           <span className="font-[family-name:var(--font-display)] text-xl font-bold tracking-tight text-(--text)">
-            Sargam
+            Cluecade
           </span>
         </Link>
 

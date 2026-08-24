@@ -7,7 +7,7 @@
 
 import { THEMES, DEFAULT_THEME, type GameTheme } from "@/data/themes";
 
-const STORAGE_KEY = "sargam-theme-color";
+const STORAGE_KEY = "cluecade-theme-color";
 
 let current: GameTheme = DEFAULT_THEME;
 let hydrated = false;

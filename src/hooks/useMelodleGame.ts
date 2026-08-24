@@ -63,6 +63,7 @@ export type GameConfig = {
 /// `starting` covers both a fresh run and a resume — the board can't be drawn
 /// either way. `error` is terminal until the player retries.
 export type GamePhase = "starting" | "ready" | "error";
+export type PendingAction = "guess" | "skip" | null;
 
 export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConfig) {
   const [phase, setPhase] = useState<GamePhase>("starting");
@@ -92,7 +93,7 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
 
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioLoading, setAudioLoading] = useState(false);
-  const [pending, setPending] = useState(false);
+  const [pendingAction, setPendingAction] = useState<PendingAction>(null);
 
   /// The whole clip for the round that just resolved — what the result panel
   /// plays back. Kept apart from `audioUrl`, which still holds only the prefix
@@ -409,10 +410,10 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
     async (match: CatalogMatch) => {
       const id = runId;
       const token = tokenRef.current;
-      if (!id || !token || pending || status !== "PENDING") return;
+      if (!id || !token || pendingAction || status !== "PENDING") return;
 
       const generation = generationRef.current;
-      setPending(true);
+      setPendingAction("guess");
       try {
         const result = await submitGuess(id, token, {
           guessedPuzzleId: match.puzzleId,
@@ -435,19 +436,19 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
         if (generation !== generationRef.current) return;
         setError(messageFor(cause, "That guess didn't go through."));
       } finally {
-        setPending(false);
+        setPendingAction(null);
       }
     },
-    [runId, pending, status, applyResult, loadAudio, loadRevealAudio],
+    [runId, pendingAction, status, applyResult, loadAudio, loadRevealAudio],
   );
 
   const skip = useCallback(async () => {
     const id = runId;
     const token = tokenRef.current;
-    if (!id || !token || pending || status !== "PENDING") return;
+    if (!id || !token || pendingAction || status !== "PENDING") return;
 
     const generation = generationRef.current;
-    setPending(true);
+    setPendingAction("skip");
     try {
       const result = await skipRound(id, token, newIdempotencyKey());
       if (generation !== generationRef.current) return;
@@ -466,9 +467,9 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
       if (generation !== generationRef.current) return;
       setError(messageFor(cause, "That skip didn't go through."));
     } finally {
-      setPending(false);
+      setPendingAction(null);
     }
-  }, [runId, pending, status, applyResult, loadAudio, loadRevealAudio]);
+  }, [runId, pendingAction, status, applyResult, loadAudio, loadRevealAudio]);
 
   /// Move to the round the server already opened when this one resolved. If the
   /// run itself finished, this starts a new one.
@@ -529,7 +530,8 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
     audioLoading,
     revealAudioUrl,
     revealAudioLoading,
-    pending,
+    pending: pendingAction !== null,
+    pendingAction,
 
     guess,
     skip,

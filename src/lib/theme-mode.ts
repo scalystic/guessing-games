@@ -6,7 +6,7 @@
 // afterward is exactly what useSyncExternalStore's split is for — no
 // setState-in-effect flash, no server/client mismatch.
 
-const STORAGE_KEY = "sargam-theme-mode";
+const STORAGE_KEY = "cluecade-theme-mode";
 export type ThemeModeValue = "light" | "dark";
 
 let listeners: Array<() => void> = [];
@@ -16,7 +16,7 @@ export function getThemeMode(): ThemeModeValue {
 }
 
 export function getServerThemeMode(): ThemeModeValue {
-  return "dark";
+  return "light";
 }
 
 export function subscribeThemeMode(callback: () => void) {

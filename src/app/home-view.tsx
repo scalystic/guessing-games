@@ -10,11 +10,18 @@ export default function HomeView({ games }: { games: GameSummary[] }) {
     <div className="flex flex-1 flex-col items-center bg-zinc-50 font-sans dark:bg-black">
       <main className="flex w-full max-w-3xl flex-1 flex-col gap-10 bg-white px-6 py-20 sm:px-16 dark:bg-black">
         <header className="flex flex-col gap-3">
-          <h1 className="text-3xl font-semibold tracking-tight text-black dark:text-zinc-50">
-            Guessing Games
-          </h1>
+          <div className="flex items-center gap-3">
+            <span
+              className="h-11 w-11 rounded-xl bg-cover bg-center"
+              style={{ backgroundImage: "url('/brand/cluecade-mark.png')" }}
+              aria-hidden="true"
+            />
+            <h1 className="text-3xl font-semibold tracking-tight text-black dark:text-zinc-50">
+              Cluecade
+            </h1>
+          </div>
           <p className="text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Pick a game to play.
+            Pick a clue. Trust your instinct.
           </p>
         </header>
 

@@ -3,7 +3,7 @@ import SignupForm from "./signup-form";
 
 export const metadata: Metadata = {
   title: "Sign up",
-  description: "Create your Guessing Games account.",
+  description: "Create your Cluecade account.",
   alternates: { canonical: "/signup" },
 };
 

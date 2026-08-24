@@ -13,7 +13,7 @@ export function StatsList({ streak, bestStreak, score, roundsPlayed, roundsSolve
 
   const rows = [
     { label: "Score", value: score.toLocaleString() },
-    { label: "Streak", value: `${streak}🔥` },
+    { label: "Current streak", value: String(streak) },
     { label: "Best streak", value: String(bestStreak) },
     { label: "Rounds played", value: String(roundsPlayed) },
     { label: "Win rate", value: winRate === null ? "—" : `${winRate}%` },

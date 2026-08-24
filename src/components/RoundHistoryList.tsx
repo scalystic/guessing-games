@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import type { RoundHistoryEntry } from "@/hooks/useMelodleGame";
-import { coverBackground } from "@/lib/cover";
 
 const COLLAPSED_COUNT = 3;
 
@@ -24,17 +23,16 @@ export function RoundHistoryList({ entries, now }: { entries: RoundHistoryEntry[
   const hasMore = entries.length > COLLAPSED_COUNT;
 
   return (
-    <div className="flex flex-col gap-3">
+    <section className="flex flex-col gap-3 border-t border-(--hairline) pt-5" aria-labelledby="recent-tracks-label">
       <div className="flex items-center justify-between">
-        <p className="flex items-center gap-2 text-sm font-semibold text-(--text)">
-          <span aria-hidden="true">🕐</span>
-          Previous Guesses
+        <p id="recent-tracks-label" className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-(--text-faint)">
+          Recent tracks
         </p>
         {hasMore && (
           <button
             type="button"
             onClick={() => setExpanded((e) => !e)}
-            className="text-xs font-medium text-(--text-dim) transition hover:text-(--text)"
+            className="text-xs font-semibold text-(--text-dim) transition-colors duration-200 hover:text-(--text)"
           >
             {expanded ? "Show less" : `View all (${entries.length})`}
           </button>
@@ -44,28 +42,22 @@ export function RoundHistoryList({ entries, now }: { entries: RoundHistoryEntry[
         {visible.map((entry, i) => (
           <li
             key={i}
-            className="flex items-center gap-3 rounded-xl border border-(--hairline) bg-(--surface) px-3 py-2.5"
+            className="grid grid-cols-[32px_1fr_auto] items-center gap-3 border-b border-(--hairline) py-3 last:border-0"
           >
             <span
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border font-mono text-[9px] font-bold"
               style={{
-                background: entry.solved ? "rgba(107,163,133,0.18)" : "rgba(193,122,107,0.18)",
-                color: entry.solved ? "#6ba385" : "#c17a6b",
+                borderColor: entry.solved ? "var(--success)" : "var(--miss)",
+                color: entry.solved ? "var(--success)" : "var(--miss)",
               }}
             >
-              {entry.solved ? "✓" : "✕"}
-            </span>
-            <span
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white/90"
-              style={{ background: coverBackground(`${entry.song.title} ${entry.song.artist}`) }}
-            >
-              {entry.song.title[0]}
+              {entry.solved ? "OK" : "MISS"}
             </span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium text-(--text)">
                 {entry.song.title}
               </span>
-              <span className="block truncate text-xs text-(--text-faint)">{entry.song.artist}</span>
+              <span className="mt-0.5 block truncate text-xs text-(--text-faint)">{entry.song.artist}</span>
             </span>
             <span className="shrink-0 text-right text-xs text-(--text-faint)">
               <span className="block">
@@ -76,6 +68,6 @@ export function RoundHistoryList({ entries, now }: { entries: RoundHistoryEntry[
           </li>
         ))}
       </ul>
-    </div>
+    </section>
   );
 }

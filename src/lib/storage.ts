@@ -150,6 +150,18 @@ export async function readPrefix(key: string, endExclusive: number): Promise<Uin
   return bytes;
 }
 
+/// Fetch the whole object. Used by the reslice path: recomputing
+/// stageByteOffsets for a new ladder needs every frame of the stored clip.
+export async function readObject(key: string): Promise<Buffer> {
+  const { client, config } = storage();
+
+  const result = await client.send(new GetObjectCommand({ Bucket: config.bucket, Key: key }));
+
+  if (!result.Body) throw new Error(`no body returned for ${key}`);
+
+  return Buffer.from(await result.Body.transformToByteArray());
+}
+
 /// Size of a stored object, or null if it isn't there. Used by the ingest
 /// pipeline to skip re-uploading content-addressed objects that already exist.
 export async function objectSize(key: string): Promise<number | null> {

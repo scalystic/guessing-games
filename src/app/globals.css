@@ -6,98 +6,99 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-body);
   --font-mono: var(--font-geist-mono);
 }
 
-/* Sargam theme tokens — light is the default, `.dark` on <html> overrides.
-   The class is set by a blocking inline script in layout.tsx before paint,
-   so there's no flash and nothing for React to reconcile at hydration. */
+/* Midnight-radio tokens. The cassette deck remains the same physical object in
+   either mode; only the room around it changes. */
 :root {
-  --bg: #faf5ec;
-  --surface: rgba(0, 0, 0, 0.04);
-  --surface-hover: rgba(0, 0, 0, 0.07);
-  --surface-strong: rgba(255, 255, 255, 0.96);
-  --hairline: rgba(0, 0, 0, 0.1);
-  --text: #000000;
-  --text-dim: rgba(0, 0, 0, 0.65);
-  --text-faint: rgba(0, 0, 0, 0.42);
-  --scrim: rgba(0, 0, 0, 0.5);
+  --bg: #e9e1d3;
+  --surface: #f8f2e7;
+  --surface-hover: #eee5d7;
+  --surface-strong: #fffaf1;
+  --deck: #171b2b;
+  --deck-window: #090c15;
+  --hairline: #c9bdab;
+  --text: #191b22;
+  --text-dim: #5f5c58;
+  --text-faint: #7b756d;
+  --signal: #d99d2f;
+  --signal-ink: #241706;
+  --success: #397a65;
+  --miss: #b15349;
+  --scrim: rgba(8, 10, 17, 0.66);
 }
 
 .dark {
-  --bg: #050810;
-  --surface: rgba(0, 0, 0, 0.28);
-  --surface-hover: rgba(255, 255, 255, 0.08);
-  --surface-strong: rgba(14, 18, 36, 0.98);
-  --hairline: rgba(255, 255, 255, 0.1);
-  --text: #ffffff;
-  --text-dim: rgba(255, 255, 255, 0.6);
-  --text-faint: rgba(255, 255, 255, 0.35);
-  --scrim: rgba(0, 0, 0, 0.6);
+  --bg: #0d1120;
+  --surface: #151a2b;
+  --surface-hover: #1d2337;
+  --surface-strong: #191f32;
+  --hairline: #30374b;
+  --text: #f2e9d8;
+  --text-dim: #bbb4a8;
+  --text-faint: #858898;
+  --signal: #f2b84b;
+  --signal-ink: #251806;
+  --success: #62b095;
+  --miss: #df7569;
+  --scrim: rgba(3, 5, 11, 0.76);
 }
 
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-body), sans-serif;
   transition: background-color 0.2s ease;
 }
 
-/* One smooth blue-to-black vignette, not a scatter of separate blurred
-   blobs — matches the reference site's backdrop directly. Light mode keeps
-   the plain --bg color; this only applies once .dark is active. */
 .page-backdrop {
   background: var(--bg);
 }
-.dark .page-backdrop {
-  /* Plain top-to-bottom fade — a fixed-size radial ellipse could land off
-     the visible area depending on page height, showing up lopsided in the
-     corners instead of centered. A vertical gradient can't do that. */
-  background: linear-gradient(to bottom, #16204a 0%, #101833 30%, #0a0e22 60%, #050810 100%);
-  background-attachment: fixed;
+
+button,
+a,
+input {
+  -webkit-tap-highlight-color: transparent;
 }
 
-@keyframes confetti-fall {
-  0% { transform: translateY(0) translateX(0) rotate(0deg); opacity: 1; }
-  100% { transform: translateY(320px) translateX(var(--drift)) rotate(280deg); opacity: 0; }
-}
-.confetti-fall {
-  animation-name: confetti-fall;
-  animation-timing-function: ease-in;
-  animation-fill-mode: forwards;
+button:not(:disabled),
+a {
+  cursor: pointer;
 }
 
-@keyframes marquee-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.25; }
-}
-.marquee-dot {
-  animation: marquee-blink 1.6s ease-in-out infinite;
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 3px;
 }
 
-/* The gradient (see page.tsx) keeps wide flat margins around the accent
-   band so both ends of this sweep land on plain text — with the accent
-   sitting right at the seam instead, the loop reset was a visible jump. */
-@keyframes shimmer-sweep {
-  0% { background-position: 0% 0; }
-  100% { background-position: -200% 0; }
-}
-.shimmer-text {
-  background-size: 150% auto;
-  background-repeat: no-repeat;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: shimmer-sweep 3.2s linear infinite;
+.signal-deck {
+  background: var(--deck);
+  border: 1px solid #343b51;
+  box-shadow: 0 24px 60px -38px rgba(0, 0, 0, 0.9);
 }
 
-@keyframes pulse-ring {
-  0%, 100% { box-shadow: 0 0 0 0 var(--pulse-color); }
-  50% { box-shadow: 0 0 0 9px transparent; }
+.cassette-window {
+  background: var(--deck-window);
+  border: 1px solid #2d3447;
+  box-shadow: inset 0 1px 12px rgba(0, 0, 0, 0.6);
 }
-.pulse-ring {
-  animation: pulse-ring 1.7s ease-out infinite;
+
+.cassette-reel {
+  background:
+    radial-gradient(circle at center, #0a0d16 0 15%, transparent 16%),
+    repeating-conic-gradient(from 0deg, #6b7080 0 12deg, #252a39 12deg 30deg);
+  border: 4px solid #d5cbb8;
+  box-shadow: inset 0 0 0 3px #171b2b;
+}
+
+.cassette-reel[data-playing="true"] {
+  animation: reel-turn 1.4s linear infinite;
+}
+
+@keyframes reel-turn {
+  to { transform: rotate(360deg); }
 }
 
 @keyframes panel-in {
@@ -106,4 +107,15 @@ body {
 }
 .panel-in {
   animation: panel-in 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

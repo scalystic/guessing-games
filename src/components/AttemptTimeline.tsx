@@ -7,56 +7,67 @@ type Props = {
   currentAttempt: number; // 1-indexed
   /// Game.maxAttempts, from the server — not a client-side constant.
   maxAttempts: number;
-  accent: string;
 };
 
-export function AttemptTimeline({ guesses, currentAttempt, maxAttempts, accent }: Props) {
+export function AttemptTimeline({ guesses, currentAttempt, maxAttempts }: Props) {
   return (
-    <div className="flex w-full gap-1.5">
-      {Array.from({ length: maxAttempts }, (_, i) => {
-        const record = guesses[i];
-        const isCurrent = !record && i + 1 === currentAttempt;
+    <section aria-labelledby="attempts-label">
+      <div className="mb-2 flex items-center justify-between">
+        <p id="attempts-label" className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-(--text-faint)">
+          Attempts
+        </p>
+        <p className="text-xs text-(--text-dim)">
+          {Math.max(0, maxAttempts - guesses.length)} left
+        </p>
+      </div>
+      <ol className="grid grid-cols-6 gap-1.5">
+        {Array.from({ length: maxAttempts }, (_, i) => {
+          const record = guesses[i];
+          const isCurrent = !record && i + 1 === currentAttempt;
 
-        let content: string = String(i + 1);
-        let bg = "var(--surface-hover)";
-        let color = "var(--text-dim)";
-        // A skip is a used, spent attempt — it should read as "done", not
-        // as equally available as an upcoming slot, even though neither
-        // has its own bright color the way correct/wrong do.
-        let usedUp = false;
+          let content: string = String(i + 1);
+          let label = `Attempt ${i + 1}, unused`;
+          let border = "var(--hairline)";
+          let color = "var(--text-faint)";
+          let background = "transparent";
 
-        if (record?.correct) {
-          content = "✓";
-          bg = "#6ba385";
-          color = "#0d211a";
-        } else if (record?.skipped) {
-          content = "»";
-          usedUp = true;
-        } else if (record) {
-          content = "✕";
-          bg = "#c17a6b";
-          color = "#2b1512";
-        } else if (isCurrent) {
-          bg = accent;
-          color = "#000";
-        }
+          if (record?.correct) {
+            content = "OK";
+            label = `Attempt ${i + 1}, correct`;
+            border = "var(--success)";
+            color = "var(--success)";
+            background = "color-mix(in srgb, var(--success) 12%, transparent)";
+          } else if (record?.skipped) {
+            content = "SKIP";
+            label = `Attempt ${i + 1}, skipped`;
+            color = "var(--text)";
+            background = "var(--surface-hover)";
+          } else if (record) {
+            content = "MISS";
+            label = `Attempt ${i + 1}, incorrect`;
+            border = "var(--miss)";
+            color = "var(--miss)";
+            background = "color-mix(in srgb, var(--miss) 10%, transparent)";
+          } else if (isCurrent) {
+            label = `Attempt ${i + 1}, current`;
+            border = "var(--signal)";
+            color = "var(--text)";
+            background = "color-mix(in srgb, var(--signal) 10%, transparent)";
+          }
 
-        return (
-          <div
-            key={i}
-            className="flex h-8 flex-1 items-center justify-center rounded-full text-xs font-bold transition-all duration-300"
-            style={{
-              background: bg,
-              color,
-              opacity: usedUp ? 0.45 : 1,
-              border: usedUp ? "none" : "1px solid var(--hairline)",
-              boxShadow: isCurrent ? `0 0 10px ${accent}` : "none",
-            }}
-          >
-            {content}
-          </div>
-        );
-      })}
-    </div>
+          return (
+            <li
+              key={i}
+              className="flex h-9 items-center justify-center rounded-[4px] border font-mono text-[10px] font-semibold transition-colors duration-200 sm:text-xs"
+              style={{ borderColor: border, color, background }}
+              aria-label={label}
+              aria-current={isCurrent ? "step" : undefined}
+            >
+              {content}
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 }
