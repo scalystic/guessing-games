@@ -23,6 +23,15 @@ export type AttemptInput = {
   isSkip: boolean;
 };
 
+export type AchievementEntry = {
+  id: string;
+  name: string;
+  desc: string;
+  icon: string;
+  unlocked: boolean;
+  color: string;
+};
+
 export type AttemptResult = {
   outcome: "PENDING" | "SOLVED" | "FAILED";
   stageReached: number;
@@ -52,7 +61,103 @@ export type AttemptResult = {
   /// `reveal` supersedes it. Derived server-side because the client never holds
   /// the target.
   hint: RoundHint | null;
+
+  // Authoritative reward/level/achievements info from backend
+  score: number;
+  level: number;
+  xpProgress: number;
+  xpPerLevel: number;
+  rankName: string;
+  achievements: AchievementEntry[];
 };
+
+export async function computeRewards(
+  tx: Tx,
+  runId: string,
+  score: number,
+  bestStreak: number,
+): Promise<{
+  score: number;
+  level: number;
+  xpProgress: number;
+  xpPerLevel: number;
+  rankName: string;
+  achievements: AchievementEntry[];
+}> {
+  const allRounds = await tx.runRound.findMany({
+    where: { runId },
+    select: { outcome: true, attemptsUsed: true },
+  });
+
+  let level = 1;
+  let remainingScore = score;
+  while (remainingScore >= (level + 1) * 500) {
+    remainingScore -= (level + 1) * 500;
+    level++;
+  }
+  const xpProgress = remainingScore;
+  const xpPerLevel = (level + 1) * 500;
+
+  let rankName = "Novice Listener";
+  if (level >= 81) {
+    rankName = "Midnight Legend";
+  } else if (level >= 51) {
+    rankName = "Soundwave Maestro";
+  } else if (level >= 31) {
+    rankName = "Frequency Expert";
+  } else if (level >= 16) {
+    rankName = "Melody Scout";
+  } else if (level >= 6) {
+    rankName = "Signal Catcher";
+  }
+
+  const roundsSolved = allRounds.filter((r) => r.outcome === "SOLVED").length;
+  const hasPerfectSync = allRounds.some((r) => r.outcome === "SOLVED" && r.attemptsUsed === 1);
+
+  const achievements = [
+    {
+      id: "first_win",
+      name: "First Lock",
+      desc: "Identify your first track",
+      icon: "🏆",
+      unlocked: roundsSolved > 0,
+      color: "from-amber-500/20 to-amber-500/5 text-amber-500 border-amber-500/30",
+    },
+    {
+      id: "perfect_sync",
+      name: "Perfect Sync",
+      desc: "Identify in exactly 1 attempt",
+      icon: "⚡",
+      unlocked: hasPerfectSync,
+      color: "from-sky-500/20 to-blue-500/5 text-sky-500 border-sky-500/30",
+    },
+    {
+      id: "streak_master",
+      name: "Maestro",
+      desc: "Reach a streak of 10 wins",
+      icon: "🔥",
+      unlocked: bestStreak >= 10,
+      color: "from-orange-500/20 to-red-500/5 text-orange-500 border-orange-500/30",
+    },
+    {
+      id: "century_score",
+      name: "Audiophile",
+      desc: "Reach a score of 1,000",
+      icon: "👑",
+      unlocked: score >= 1000,
+      color: "from-purple-500/20 to-indigo-500/5 text-purple-500 border-purple-500/30",
+    },
+  ];
+
+  return {
+    score,
+    level,
+    xpProgress,
+    xpPerLevel,
+    rankName,
+    achievements,
+  };
+}
 
 export type AttemptError =
   | { kind: "not_in_progress"; status: string }
@@ -178,6 +283,7 @@ export async function applyAttempt(input: AttemptInput): Promise<AttemptResult> 
       data: { version: { increment: 1 }, totalRevealMs: { increment: revealMs } },
     });
 
+    const rewards = await computeRewards(tx, run.id, run.score, run.bestStreak);
     return {
       outcome: "PENDING",
       stageReached: updated.stageReached,
@@ -192,6 +298,7 @@ export async function applyAttempt(input: AttemptInput): Promise<AttemptResult> 
       points: null,
       reveal: null,
       hint: await hintFor(tx, round.puzzleId, updated.attemptsUsed),
+      ...rewards,
     };
   });
 }
@@ -247,6 +354,8 @@ type ResolveArgs = {
     currentRoundIndex: number;
     currentStreak: number;
     bestStreak: number;
+    score: number;
+    xpEarned: number;
     game: {
       maxAttempts: number;
       puzzleCooldownDays: number;
@@ -382,6 +491,9 @@ async function advance(
       },
     });
 
+    const finalScore = run.score + args.scoreDelta;
+    const finalBestStreak = bestStreak;
+    const rewards = await computeRewards(tx, run.id, finalScore, finalBestStreak);
     return {
       outcome: args.solved ? "SOLVED" : "FAILED",
       stageReached: round.stageReached,
@@ -397,6 +509,7 @@ async function advance(
       reveal: reveal ?? null,
       // The round is over; `reveal` says everything a hint would have.
       hint: null,
+      ...rewards,
     };
   }
 
@@ -436,6 +549,9 @@ async function advance(
       },
     });
 
+    const finalScore = run.score + args.scoreDelta;
+    const finalBestStreak = bestStreak;
+    const rewards = await computeRewards(tx, run.id, finalScore, finalBestStreak);
     return {
       outcome: args.solved ? "SOLVED" : "FAILED",
       stageReached: round.stageReached,
@@ -450,6 +566,7 @@ async function advance(
       points: args.scoreDelta,
       reveal: reveal ?? null,
       hint: null,
+      ...rewards,
     };
   }
 
@@ -479,6 +596,9 @@ async function advance(
     },
   });
 
+  const finalScore = run.score + args.scoreDelta;
+  const finalBestStreak = bestStreak;
+  const rewards = await computeRewards(tx, run.id, finalScore, finalBestStreak);
   return {
     outcome: args.solved ? "SOLVED" : "FAILED",
     stageReached: round.stageReached,
@@ -496,6 +616,7 @@ async function advance(
     // The round just resolved. The NEXT round starts at attempt 0, which earns
     // no hint — so null is right here too, not a hint for the new puzzle.
     hint: null,
+    ...rewards,
   };
 }
 
@@ -523,6 +644,7 @@ async function describeCurrentState(tx: Tx, runId: string): Promise<AttemptResul
       livesRemaining: true,
       currentStreak: true,
       bestStreak: true,
+      score: true,
       game: { select: { maxAttempts: true } },
     },
   });
@@ -538,6 +660,8 @@ async function describeCurrentState(tx: Tx, runId: string): Promise<AttemptResul
       puzzleId: true,
     },
   });
+
+  const rewards = await computeRewards(tx, runId, run.score, run.bestStreak);
 
   return {
     outcome: round?.outcome ?? "PENDING",
@@ -568,5 +692,6 @@ async function describeCurrentState(tx: Tx, runId: string): Promise<AttemptResul
       round && round.outcome === "PENDING"
         ? await hintFor(tx, round.puzzleId, round.attemptsUsed)
         : null,
+    ...rewards,
   };
 }

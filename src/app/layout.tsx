@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Anek_Latin, Geist_Mono, Instrument_Sans } from "next/font/google";
+import { Fraunces, Geist_Mono, Instrument_Sans } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
 
@@ -13,11 +13,12 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-// Anek's condensed proportions borrow from hand-painted film and record
-// lettering without turning the whole product into a novelty type specimen.
-const anek = Anek_Latin({
+// Fraunces' warm, slightly retro serif reads like vinyl-sleeve type —
+// fitting for the cassette-deck aesthetic without turning into a novelty font.
+const fraunces = Fraunces({
   variable: "--font-display",
   subsets: ["latin"],
+  weight: ["500", "600", "700"],
 });
 
 export const metadata: Metadata = {
@@ -43,7 +44,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${instrumentSans.variable} ${geistMono.variable} ${anek.variable} h-full antialiased`}
+      className={`${instrumentSans.variable} ${geistMono.variable} ${fraunces.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-(--bg) text-(--text)">
         <Script

@@ -40,6 +40,24 @@ function HelpIcon() {
   );
 }
 
+function StreakIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" />
+    </svg>
+  );
+}
+
+function BestStreakIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M7 4h10v4a5 5 0 0 1-10 0V4z" />
+      <path d="M7 5H4.5A1.5 1.5 0 0 0 3 6.5c0 1.66 1.34 3 3 3M17 5h2.5A1.5 1.5 0 0 1 21 6.5c0 1.66-1.34 3-3 3" />
+      <path d="M12 13v3M9 20h6M10 20v-1.5a2 2 0 0 1 4 0V20" />
+    </svg>
+  );
+}
+
 type HeaderActionProps = {
   label: string;
   icon: React.ReactNode;
@@ -107,7 +125,9 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
           ? "Checking that answer…"
           : game.pendingAction === "skip"
             ? `Unlocking ${nextRevealMs ? formatSeconds(nextRevealMs) : "more"} seconds…`
-            : `You have ${formatSeconds(game.revealMs)} seconds. Know it?`;
+            : game.pendingAction === "giveup"
+              ? "Revealing the mystery track…"
+              : `You have ${formatSeconds(game.revealMs)} seconds. Know it?`;
 
   return (
     <div className="page-backdrop min-h-screen text-(--text)">
@@ -132,18 +152,23 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
           </nav>
         </header>
 
-        <section className="grid grid-cols-3 border-b border-(--hairline)" aria-label="Current session">
-          <div className="border-r border-(--hairline) py-3 pr-3">
-            <p className="font-mono text-[9px] uppercase tracking-[0.15em] text-(--text-faint)">Track</p>
-            <p className="mt-1 text-sm font-semibold text-(--text)">{String(game.roundIndex).padStart(2, "0")}</p>
-          </div>
-          <div className="border-r border-(--hairline) px-3 py-3 text-center">
-            <p className="font-mono text-[9px] uppercase tracking-[0.15em] text-(--text-faint)">Score</p>
-            <p className="mt-1 text-sm font-semibold text-(--text)">{game.score.toLocaleString()}</p>
-          </div>
-          <div className="py-3 pl-3 text-right">
-            <p className="font-mono text-[9px] uppercase tracking-[0.15em] text-(--text-faint)">Streak</p>
-            <p className="mt-1 text-sm font-semibold text-(--text)">{game.streak}</p>
+        <section className="flex items-center justify-center border-b border-(--hairline) py-3.5" aria-label="Current session">
+          <div className="flex items-center gap-3 rounded-full border border-(--hairline) bg-(--surface) px-4 py-1.5">
+            <span className="flex items-center gap-2">
+              <span className="text-(--signal)">
+                <StreakIcon />
+              </span>
+              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-(--text-faint)">Streak</span>
+              <span className="text-sm font-bold text-(--signal)">{game.streak}</span>
+            </span>
+            <span className="h-4 w-px bg-(--hairline)" aria-hidden="true" />
+            <span className="flex items-center gap-2">
+              <span className="text-(--text-faint)">
+                <BestStreakIcon />
+              </span>
+              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-(--text-faint)">Best</span>
+              <span className="text-sm font-bold text-(--text)">{game.bestStreak}</span>
+            </span>
           </div>
         </section>
 
@@ -168,9 +193,9 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
           <div className="mb-5 flex items-end justify-between gap-4">
             <div>
               <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-(--signal)">
-                Mystery signal · Track {String(game.roundIndex).padStart(2, "0")}
+                Mystery track
               </p>
-              <h1 id="mystery-track-title" className="mt-2 max-w-xl text-balance font-[family-name:var(--font-display)] text-4xl font-semibold leading-[0.95] tracking-[-0.025em] text-(--text) sm:text-5xl">
+              <h1 id="mystery-track-title" className="mt-2 max-w-xl text-balance font-[family-name:var(--font-display)] text-2xl font-semibold leading-[1.05] tracking-[-0.02em] text-(--text) sm:text-3xl">
                 {prompt}
               </h1>
             </div>
@@ -212,7 +237,33 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
                 disabled={game.pending || game.audioLoading || game.phase !== "ready"}
                 onGuess={(match) => void game.guess(match)}
                 onSkip={() => void game.skip()}
+                onGiveUp={() => void game.giveUp()}
               />
+            </div>
+          ) : null}
+
+          {!resolved && (game.pendingAction === "guess" || game.pendingAction === "giveup") ? (
+            <div
+              className="fixed inset-0 z-40 flex items-center justify-center bg-(--scrim) p-4"
+              role="status"
+              aria-live="polite"
+            >
+              <div className="panel-in relative flex w-full max-w-xs flex-col items-center gap-5 overflow-hidden rounded-[14px] border border-(--hairline) bg-(--surface-strong) px-8 py-10 text-center shadow-2xl">
+                <div
+                  className="pointer-events-none absolute -inset-10 -z-10 animate-pulse rounded-full opacity-20 blur-3xl"
+                  style={{ background: "radial-gradient(circle, var(--signal) 0%, transparent 70%)" }}
+                  aria-hidden="true"
+                />
+                <span className="cassette-reel h-16 w-16" data-playing="true" aria-hidden="true" />
+                <div>
+                  <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-(--signal)">
+                    {game.pendingAction === "giveup" ? "Revealing" : "Checking"}
+                  </p>
+                  <p className="mt-1.5 font-[family-name:var(--font-display)] text-lg font-semibold leading-tight text-(--text)">
+                    {game.pendingAction === "giveup" ? "Uncovering the mystery track…" : "Locking in your answer…"}
+                  </p>
+                </div>
+              </div>
             </div>
           ) : null}
 
@@ -230,6 +281,14 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
               fullAudioUrl={game.revealAudioUrl}
               audioLoading={game.revealAudioLoading}
               onNext={handleNextRound}
+              roundsSolved={game.roundsSolved}
+              bestStreak={game.bestStreak}
+              roundHistory={game.roundHistory}
+              level={game.level}
+              xpProgress={game.xpProgress}
+              xpPerLevel={game.xpPerLevel}
+              rankName={game.rankName}
+              achievements={game.achievements}
             />
           ) : null}
         </section>
@@ -256,6 +315,12 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
             score={game.score}
             roundsPlayed={game.roundsPlayed}
             roundsSolved={game.roundsSolved}
+            roundHistory={game.roundHistory}
+            level={game.level}
+            xpProgress={game.xpProgress}
+            xpPerLevel={game.xpPerLevel}
+            rankName={game.rankName}
+            achievements={game.achievements}
           />
         </Modal>
       ) : null}

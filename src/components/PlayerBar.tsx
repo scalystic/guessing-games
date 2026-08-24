@@ -36,6 +36,25 @@ export function PlayerBar({
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [progressMs, setProgressMs] = useState(0);
+  const [vuLevels, setVuLevels] = useState([0, 0]);
+
+  useEffect(() => {
+    if (!isPlaying) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setVuLevels([
+        Math.floor(Math.random() * 8) + 1,
+        Math.floor(Math.random() * 8) + 1,
+      ]);
+    }, 100);
+
+    return () => {
+      clearInterval(interval);
+      setVuLevels([0, 0]);
+    };
+  }, [isPlaying]);
 
   useEffect(() => {
     if (!audioUrl) {
@@ -131,38 +150,73 @@ export function PlayerBar({
           <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-[#8e93a3]">
             Clip window
           </p>
-          <p className="mt-1 font-[family-name:var(--font-display)] text-4xl font-semibold leading-none tracking-[-0.02em] text-[#f2e9d8] sm:text-5xl">
+          <p className="mt-1 font-[family-name:var(--font-display)] text-2xl font-semibold leading-none tracking-[-0.02em] text-[#f2e9d8] sm:text-3xl">
             {formatDuration(revealMs)}
           </p>
         </div>
-        <div className="border border-[#394056] px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[#a8adba]">
-          {loading ? "Tuning" : isPlaying ? "On air" : "Ready"}
+        <div className="border border-[#394056] px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[#a8adba] flex items-center gap-1.5 rounded-[4px]">
+          {isPlaying && (
+            <span className="h-1.5 w-1.5 rounded-full bg-[#ff4d4d] animate-pulse shadow-[0_0_6px_#ff4d4d]" />
+          )}
+          {!isPlaying && !loading && (
+            <span className="h-1.5 w-1.5 rounded-full bg-[#525a70]" />
+          )}
+          {loading && (
+            <span className="h-1.5 w-1.5 rounded-full bg-[#f2b84b] animate-ping" />
+          )}
+          <span>{loading ? "Tuning" : isPlaying ? "On air" : "Ready"}</span>
         </div>
       </div>
 
-      <div className="cassette-window mt-5 grid grid-cols-[42px_1fr_42px] items-center gap-3 rounded-[10px] px-3 py-5 sm:grid-cols-[56px_1fr_56px] sm:gap-5 sm:px-5">
-        <span className="cassette-reel aspect-square rounded-full" data-playing={isPlaying} aria-hidden="true" />
+      <div className="relative mt-5 p-4 rounded-[12px] bg-[#10131e] border border-[#2d3447] shadow-inner overflow-hidden">
+        {/* Cassette Shell Label body */}
+        <div className="absolute inset-2 bg-gradient-to-b from-[#2c3347] to-[#1a1e2b] rounded-[8px] border border-[#3e4761] shadow-md z-0 opacity-90" />
+        
+        {/* Cassette Label Stripe (Cream/Gold/Blue horizontal stripes) */}
+        <div className="absolute top-1/2 -translate-y-1/2 left-2 right-2 h-10 bg-gradient-to-r from-[#d99d2f]/10 via-[#3a7ad5]/15 to-[#d99d2f]/10 border-t border-b border-[#3e4761]/30 z-0 pointer-events-none" />
 
-        <div className="flex h-14 items-center gap-0.5 overflow-hidden" aria-hidden="true">
-          {bars.map((height, index) => {
-            const barPct = (index / BAR_COUNT) * 100;
-            return (
-              <span
-                key={index}
-                className="min-h-1 flex-1 bg-[#42495d] transition-colors duration-150"
-                style={{
-                  height: `${height.toFixed(2)}%`,
-                  background: barPct <= playedPct ? "var(--signal)" : undefined,
-                }}
-              />
-            );
-          })}
+        {/* Clear center viewport window */}
+        <div className="relative z-10 grid grid-cols-[42px_1fr_42px] items-center gap-3 rounded-[6px] bg-[#07090f] border border-[#1b1f2d] shadow-[inset_0_2px_8px_rgba(0,0,0,0.8)] px-3 py-4 sm:grid-cols-[56px_1fr_56px] sm:gap-5 sm:px-5 overflow-hidden">
+          {/* Glass reflection overlay */}
+          <div className="absolute inset-0 pointer-events-none bg-gradient-to-tr from-transparent via-white/[0.015] to-white/[0.05] z-20" />
+
+          {/* 4 Corner Screws */}
+          <div className="absolute top-1 left-1 w-1 h-1 rounded-full bg-[#11141c] border border-[#252b3b]" />
+          <div className="absolute top-1 right-1 w-1 h-1 rounded-full bg-[#11141c] border border-[#252b3b]" />
+          <div className="absolute bottom-1 left-1 w-1 h-1 rounded-full bg-[#11141c] border border-[#252b3b]" />
+          <div className="absolute bottom-1 right-1 w-1 h-1 rounded-full bg-[#11141c] border border-[#252b3b]" />
+
+          {/* Cassette Tape Film background line */}
+          <div className="absolute bottom-1.5 left-6 right-6 h-[4px] bg-[#22170d] border-t border-[#3d2c1c] opacity-90 z-0" />
+
+          {/* Cassette Label Text */}
+          <div className="absolute top-1 left-1/2 -translate-x-1/2 font-mono text-[7px] tracking-[0.25em] text-[#5b647d] uppercase select-none pointer-events-none z-10">
+            SARGAM CH-1 • C90
+          </div>
+
+          <span className="cassette-reel relative aspect-square rounded-full z-10" data-playing={isPlaying} aria-hidden="true" />
+
+          <div className="relative flex h-10 items-center gap-0.5 overflow-hidden z-10" aria-hidden="true">
+            {bars.map((height, index) => {
+              const barPct = (index / BAR_COUNT) * 100;
+              return (
+                <span
+                  key={index}
+                  className="min-h-1 flex-1 bg-[#1e2333] transition-colors duration-150"
+                  style={{
+                    height: `${height.toFixed(2)}%`,
+                    background: barPct <= playedPct ? "var(--signal)" : undefined,
+                  }}
+                />
+              );
+            })}
+          </div>
+
+          <span className="cassette-reel relative aspect-square rounded-full z-10" data-playing={isPlaying} aria-hidden="true" />
         </div>
-
-        <span className="cassette-reel aspect-square rounded-full" data-playing={isPlaying} aria-hidden="true" />
       </div>
 
-      <div className="mt-5 flex items-center gap-4">
+      <div className="mt-5 flex items-center gap-4 border-t border-[#2d3447] pt-5">
         <button
           type="button"
           onClick={isPlaying ? handleStop : handlePlay}
@@ -195,6 +249,42 @@ export function PlayerBar({
             Replay as often as you need. A miss unlocks more.
           </p>
         </div>
+
+        {/* Dual LED VU Meter on the right */}
+        <div className="flex flex-col gap-1 bg-[#0b0d14] p-2 rounded border border-[#242a3a] shadow-inner shrink-0 w-[110px]">
+          <div className="flex items-center justify-between text-[6px] font-mono text-[#525a70] px-1 mb-0.5">
+            <span>LEVEL METER</span>
+            <span>VU</span>
+          </div>
+          {/* L channel */}
+          <div className="flex items-center gap-[2px]">
+            <span className="text-[7px] font-mono text-[#525a70] w-2.5">L</span>
+            {Array.from({ length: 8 }).map((_, i) => {
+              const active = vuLevels[0] > i;
+              let color = "bg-[#181c26]";
+              if (active) {
+                if (i < 5) color = "bg-[#22c55e] shadow-[0_0_4px_rgba(34,197,94,0.6)]";
+                else if (i < 7) color = "bg-[#eab308] shadow-[0_0_4px_rgba(234,179,8,0.6)]";
+                else color = "bg-[#ef4444] shadow-[0_0_4px_rgba(239,68,68,0.6)]";
+              }
+              return <span key={i} className={`h-1 w-[7px] rounded-[1px] transition-all duration-75 ${color}`} />;
+            })}
+          </div>
+          {/* R channel */}
+          <div className="flex items-center gap-[2px]">
+            <span className="text-[7px] font-mono text-[#525a70] w-2.5">R</span>
+            {Array.from({ length: 8 }).map((_, i) => {
+              const active = vuLevels[1] > i;
+              let color = "bg-[#181c26]";
+              if (active) {
+                if (i < 5) color = "bg-[#22c55e] shadow-[0_0_4px_rgba(34,197,94,0.6)]";
+                else if (i < 7) color = "bg-[#eab308] shadow-[0_0_4px_rgba(234,179,8,0.6)]";
+                else color = "bg-[#ef4444] shadow-[0_0_4px_rgba(239,68,68,0.6)]";
+              }
+              return <span key={i} className={`h-1 w-[7px] rounded-[1px] transition-all duration-75 ${color}`} />;
+            })}
+          </div>
+        </div>
       </div>
 
       <ol className="mt-5 grid grid-cols-6 gap-1.5" aria-label="Reveal stages">
@@ -206,8 +296,8 @@ export function PlayerBar({
               key={milliseconds}
               className="border-t-2 pt-2 text-center font-mono text-[9px] sm:text-[10px]"
               style={{
-                borderColor: current ? "var(--signal)" : unlocked ? "#777e91" : "#303648",
-                color: current ? "var(--signal)" : unlocked ? "#c6c0b4" : "#9da3b6",
+                borderColor: unlocked ? "var(--signal)" : "#303648",
+                color: unlocked ? "var(--signal)" : "#9da3b6",
               }}
               aria-current={current ? "step" : undefined}
             >

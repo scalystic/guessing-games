@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { internalErrorJson, jsonError, jsonOk } from "@/lib/api/response";
 import { readRunToken, runTokenMatches } from "@/lib/game/run-token";
 import { deriveHint, type RoundHint } from "@/lib/game/hint";
+import { computeRewards } from "@/lib/game/attempt";
 
 /// GET /api/runs/[runId] — the state of a run, for resume.
 ///
@@ -196,6 +197,8 @@ export async function GET(
           : null,
       }));
 
+    const rewards = await computeRewards(prisma, runId, run.score, run.bestStreak);
+
     return jsonOk({
       runId,
       gameSlug: run.game.slug,
@@ -204,7 +207,6 @@ export async function GET(
       maxAttempts: run.game.maxAttempts,
       revealLadder: toLadder(run.game.revealLadder),
       livesRemaining: run.livesRemaining,
-      score: run.score,
       xpEarned: run.xpEarned,
       currentStreak: run.currentStreak,
       bestStreak: run.bestStreak,
@@ -215,6 +217,7 @@ export async function GET(
       audioUrl: run.status === "IN_PROGRESS" && current ? `/api/runs/${runId}/audio` : null,
       current,
       past,
+      ...rewards,
     });
   } catch (error) {
     return internalErrorJson("runs.get", error);

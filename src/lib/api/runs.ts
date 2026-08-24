@@ -39,6 +39,15 @@ export type Reveal = {
   releaseYear: number | null;
 };
 
+export type AchievementEntry = {
+  id: string;
+  name: string;
+  desc: string;
+  icon: string;
+  unlocked: boolean;
+  color: string;
+};
+
 export type AttemptResult = {
   outcome: RoundOutcome;
   stageReached: number;
@@ -55,6 +64,13 @@ export type AttemptResult = {
   points: number | null;
   reveal: Reveal | null;
   hint: RoundHint | null;
+
+  score: number;
+  level: number;
+  xpProgress: number;
+  xpPerLevel: number;
+  rankName: string;
+  achievements: AchievementEntry[];
 };
 
 export type RunState = {
@@ -96,6 +112,12 @@ export type RunState = {
     resolvedAt: string | null;
     song: Reveal | null;
   }[];
+
+  level: number;
+  xpProgress: number;
+  xpPerLevel: number;
+  rankName: string;
+  achievements: AchievementEntry[];
 };
 
 export type CatalogMatch = {

@@ -10,12 +10,15 @@ import {
   skipRound,
   startRun,
   submitGuess,
+  type AchievementEntry,
   type AttemptResult,
   type CatalogMatch,
   type Reveal,
   type RoundHint,
   type RunStatus,
 } from "@/lib/api/runs";
+
+export type { AchievementEntry };
 import { clearStoredRun, loadStoredRun, saveStoredRun } from "@/lib/run-storage";
 
 /// The run loop, driven entirely by the server.
@@ -63,7 +66,7 @@ export type GameConfig = {
 /// `starting` covers both a fresh run and a resume — the board can't be drawn
 /// either way. `error` is terminal until the player retries.
 export type GamePhase = "starting" | "ready" | "error";
-export type PendingAction = "guess" | "skip" | null;
+export type PendingAction = "guess" | "skip" | "giveup" | null;
 
 export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConfig) {
   const [phase, setPhase] = useState<GamePhase>("starting");
@@ -90,6 +93,13 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
   const [roundsPlayed, setRoundsPlayed] = useState(0);
   const [roundsSolved, setRoundsSolved] = useState(0);
   const [roundHistory, setRoundHistory] = useState<RoundHistoryEntry[]>([]);
+
+  // Backend rewards/levels
+  const [level, setLevel] = useState(1);
+  const [xpProgress, setXpProgress] = useState(0);
+  const [xpPerLevel, setXpPerLevel] = useState(500);
+  const [rankName, setRankName] = useState("Novice Listener");
+  const [achievements, setAchievements] = useState<AchievementEntry[]>([]);
 
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioLoading, setAudioLoading] = useState(false);
@@ -325,6 +335,11 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
         setBestStreak(state.bestStreak);
         setRoundsSolved(state.roundsSolved);
         setRoundsPlayed(state.roundsSolved + state.roundsFailed);
+        setLevel(state.level ?? 1);
+        setXpProgress(state.xpProgress ?? 0);
+        setXpPerLevel(state.xpPerLevel ?? 500);
+        setRankName(state.rankName ?? "Novice Listener");
+        setAchievements(state.achievements ?? []);
         setRoundHistory(
           state.past
             .filter((round) => round.song !== null)
@@ -377,6 +392,12 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
       // and quietly disagreed with the run the moment that rule changed.
       setStreak(result.currentStreak);
       setBestStreak(result.bestStreak);
+      if (result.score !== undefined) setScore(result.score);
+      if (result.level !== undefined) setLevel(result.level);
+      if (result.xpProgress !== undefined) setXpProgress(result.xpProgress);
+      if (result.xpPerLevel !== undefined) setXpPerLevel(result.xpPerLevel);
+      if (result.rankName !== undefined) setRankName(result.rankName);
+      if (result.achievements !== undefined) setAchievements(result.achievements);
 
       if (result.outcome === "PENDING") return;
 
@@ -386,8 +407,6 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
       setReveal(result.reveal);
       setLastPoints(result.points);
       setRoundsPlayed((count) => count + 1);
-
-      if (result.points !== null) setScore((current) => current + result.points!);
 
       if (result.outcome === "SOLVED") setRoundsSolved((count) => count + 1);
 
@@ -471,6 +490,43 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
     }
   }, [runId, pendingAction, status, applyResult, loadAudio, loadRevealAudio]);
 
+  const giveUp = useCallback(async () => {
+    const id = runId;
+    const token = tokenRef.current;
+    if (!id || !token || pendingAction || status !== "PENDING") return;
+
+    const generation = generationRef.current;
+    setPendingAction("giveup");
+    try {
+      let currentAttemptsUsed = attemptsUsed;
+      let outcome: RoundStatus = "PENDING";
+      let lastResult: AttemptResult | null = null;
+
+      while (outcome === "PENDING" && currentAttemptsUsed < maxAttempts) {
+        const result = await skipRound(id, token, newIdempotencyKey());
+        lastResult = result;
+        outcome = result.outcome as RoundStatus;
+        currentAttemptsUsed = result.attemptsUsed;
+      }
+
+      if (lastResult) {
+        applyResult(lastResult, {
+          song: null,
+          puzzleId: null,
+          correct: false,
+          skipped: true,
+          at: Date.now(),
+        });
+        await loadRevealAudio(id, generation);
+      }
+    } catch (cause) {
+      if (generation !== generationRef.current) return;
+      setError(messageFor(cause, "Giving up failed."));
+    } finally {
+      if (generation === generationRef.current) setPendingAction(null);
+    }
+  }, [runId, pendingAction, status, attemptsUsed, maxAttempts, applyResult, loadRevealAudio]);
+
   /// Move to the round the server already opened when this one resolved. If the
   /// run itself finished, this starts a new one.
   const nextRound = useCallback(async () => {
@@ -526,6 +582,12 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
     roundsSolved,
     roundHistory,
 
+    level,
+    xpProgress,
+    xpPerLevel,
+    rankName,
+    achievements,
+
     audioUrl,
     audioLoading,
     revealAudioUrl,
@@ -535,6 +597,7 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
 
     guess,
     skip,
+    giveUp,
     nextRound,
     restartRun,
   };

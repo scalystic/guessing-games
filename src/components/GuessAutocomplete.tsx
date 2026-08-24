@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PendingAction } from "@/hooks/useMelodleGame";
 import { searchCatalog, type CatalogMatch } from "@/lib/api/runs";
+import { CoverArt } from "@/components/CoverArt";
 
 /// Typeahead over the catalog, backed by GET /api/games/[slug]/search.
 ///
@@ -20,12 +21,21 @@ type Props = {
   excludePuzzleIds: Set<string>;
   onGuess: (match: CatalogMatch) => void;
   onSkip: () => void;
+  onGiveUp?: () => void;
 };
 
 /// Long enough that a fast typist doesn't fire a query per keystroke, short
 /// enough that the list feels like it's keeping up.
 const DEBOUNCE_MS = 180;
 const MIN_QUERY_LENGTH = 2;
+
+function ArrowIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 10h12M11 5.5l5 4.5-5 4.5" />
+    </svg>
+  );
+}
 
 export function GuessAutocomplete({
   gameSlug,
@@ -35,6 +45,7 @@ export function GuessAutocomplete({
   excludePuzzleIds,
   onGuess,
   onSkip,
+  onGiveUp,
 }: Props) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -164,7 +175,9 @@ export function GuessAutocomplete({
       ? "Checking your answer…"
       : pendingAction === "skip"
         ? `Unlocking ${nextSeconds ?? "the next"} second${nextSeconds === 1 ? "" : "s"}…`
-        : null;
+        : pendingAction === "giveup"
+          ? "Revealing the mystery track…"
+          : null;
 
   return (
     <section ref={rootRef} className="relative w-full" aria-labelledby="your-guess-label">
@@ -199,7 +212,7 @@ export function GuessAutocomplete({
             onFocus={() => setOpen(true)}
             onKeyDown={handleKeyDown}
             placeholder={pendingCopy ?? (disabled ? "Preparing the round…" : "Song title or artist")}
-            className="h-12 w-full rounded-[7px] border border-(--hairline) bg-(--surface) pr-4 pl-10 text-base text-(--text) placeholder:text-(--text-faint) transition-colors duration-200 focus:border-(--signal) focus:bg-(--surface-strong) disabled:cursor-wait disabled:opacity-70"
+            className="h-12 w-full rounded-[7px] border border-(--hairline) bg-(--surface) pr-4 pl-10 text-base text-(--text) placeholder:text-(--text-faint) transition-colors duration-200 focus:border-(--signal) focus:bg-(--surface-strong) focus-visible:outline-none disabled:cursor-wait disabled:opacity-70"
           />
           {showDropdown && (
             <ul className="absolute bottom-full z-20 mb-2 max-h-72 w-full overflow-auto rounded-[8px] border border-(--hairline) bg-(--surface-strong) p-1.5 shadow-2xl shadow-black/25">
@@ -220,9 +233,12 @@ export function GuessAutocomplete({
                       background: i === activeIndex ? "var(--surface-hover)" : "transparent",
                     }}
                   >
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-(--hairline) font-mono text-[10px] text-(--text-faint)">
-                      {String(i + 1).padStart(2, "0")}
-                    </span>
+                    <CoverArt
+                      title={match.title}
+                      artist={match.artist}
+                      album={match.album}
+                      className="h-8 w-8 rounded-md"
+                    />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium text-(--text)">
                         {match.title}
@@ -238,28 +254,24 @@ export function GuessAutocomplete({
             </ul>
           )}
         </div>
-        <div className="grid grid-cols-[1fr_auto] gap-2 sm:flex sm:shrink-0">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onSkip}
+          className="flex min-h-12 shrink-0 items-center justify-center gap-1.5 rounded-[7px] bg-(--signal) px-5 text-sm font-bold text-(--signal-ink) transition-colors duration-200 enabled:hover:bg-[#ffd071] disabled:cursor-wait disabled:opacity-50"
+        >
+          {pendingAction === "skip" ? "Unlocking…" : "Skip"}
+        </button>
+        {onGiveUp && (
           <button
             type="button"
             disabled={disabled}
-            onClick={onSkip}
-            className="min-h-12 rounded-[7px] border border-(--hairline) bg-transparent px-4 text-sm font-semibold text-(--text-dim) transition-colors duration-200 enabled:hover:border-(--text-faint) enabled:hover:text-(--text) disabled:cursor-wait disabled:opacity-50"
+            onClick={onGiveUp}
+            className="flex min-h-12 shrink-0 items-center justify-center gap-1.5 rounded-[7px] border border-(--hairline) bg-(--surface) px-4 text-sm font-semibold text-(--text-dim) transition-all duration-200 enabled:hover:border-red-500/30 enabled:hover:bg-red-500/10 enabled:hover:text-red-400 disabled:cursor-wait disabled:opacity-50"
           >
-            {pendingAction === "skip"
-              ? "Unlocking…"
-              : nextSeconds === null
-                ? "Skip"
-                : `Skip → ${nextSeconds}s`}
+            {pendingAction === "giveup" ? "Revealing…" : "Give Up"}
           </button>
-          <button
-            type="button"
-            disabled={disabled || !active}
-            onClick={() => void submitHighlighted()}
-            className="min-h-12 rounded-[7px] bg-(--signal) px-6 text-sm font-bold text-(--signal-ink) transition-colors duration-200 enabled:hover:bg-[#ffd071] disabled:cursor-not-allowed disabled:opacity-35"
-          >
-            {pendingAction === "guess" ? "Checking…" : "Guess"}
-          </button>
-        </div>
+        )}
       </div>
       <p className="mt-2 min-h-4 text-xs text-(--text-faint)" role="status" aria-live="polite">
         {pendingCopy ?? (active ? "Choose a catalog match before submitting." : "Type at least two characters.")}

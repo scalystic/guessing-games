@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { DeleteSongButton } from "./delete-song-button";
 import { AddSongModal } from "./add-song-modal";
+import { CoverArt } from "@/components/CoverArt";
 
 export type StatusFilter = "all" | "active" | "removed" | "missing-clip";
 export type SortKey = "title" | "artist" | "popularity";
@@ -21,6 +22,7 @@ type SongRow = {
   puzzleId: string;
   title: string;
   artist: string;
+  album: string | null;
   popularity: number;
   isBlocked: boolean;
 };
@@ -244,9 +246,7 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
                 >
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 text-sm">
-                        🎵
-                      </span>
+                      <CoverArt title={song.title} artist={song.artist} album={song.album} />
                       <span className="font-medium text-(--text)">{song.title}</span>
                     </div>
                   </td>

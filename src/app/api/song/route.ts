@@ -107,6 +107,7 @@ export async function GET(request: Request): Promise<Response> {
       puzzleId: song.puzzle.id,
       title: song.title,
       artist: song.artist,
+      album: song.album,
       popularity: song.puzzle.popularity,
       isActive: song.puzzle.isActive,
       isBlocked: song.puzzle.isBlocked,

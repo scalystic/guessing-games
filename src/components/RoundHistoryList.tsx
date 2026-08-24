@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { RoundHistoryEntry } from "@/hooks/useMelodleGame";
+import { CoverArt } from "@/components/CoverArt";
 
 const COLLAPSED_COUNT = 3;
 
@@ -42,22 +43,40 @@ export function RoundHistoryList({ entries, now }: { entries: RoundHistoryEntry[
         {visible.map((entry, i) => (
           <li
             key={i}
-            className="grid grid-cols-[32px_1fr_auto] items-center gap-3 border-b border-(--hairline) py-3 last:border-0"
+            className="grid grid-cols-[40px_1fr_auto] items-center gap-3 border-b border-(--hairline) py-3 last:border-0"
           >
-            <span
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border font-mono text-[9px] font-bold"
-              style={{
-                borderColor: entry.solved ? "var(--success)" : "var(--miss)",
-                color: entry.solved ? "var(--success)" : "var(--miss)",
-              }}
-            >
-              {entry.solved ? "OK" : "MISS"}
+            <span className="relative block h-10 w-10 shrink-0">
+              <CoverArt
+                title={entry.song.title}
+                artist={entry.song.artist}
+                album={entry.song.album}
+                className="h-10 w-10 rounded-lg"
+              />
+              <span
+                className="absolute -bottom-1 -right-1 flex h-4.5 w-4.5 items-center justify-center rounded-full border-2 border-(--bg)"
+                style={{ background: entry.solved ? "var(--success)" : "var(--miss)" }}
+                aria-hidden="true"
+              >
+                {entry.solved ? (
+                  <svg width="8" height="8" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="2.5 6 4.5 8 9.5 3" />
+                  </svg>
+                ) : (
+                  <svg width="7" height="7" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="2.5" y1="2.5" x2="9.5" y2="9.5" />
+                    <line x1="9.5" y1="2.5" x2="2.5" y2="9.5" />
+                  </svg>
+                )}
+              </span>
+              <span className="sr-only">{entry.solved ? "Solved" : "Missed"}</span>
             </span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium text-(--text)">
                 {entry.song.title}
               </span>
-              <span className="mt-0.5 block truncate text-xs text-(--text-faint)">{entry.song.artist}</span>
+              <span className="mt-0.5 block truncate text-xs text-(--text-faint)">
+                {[entry.song.artist, entry.song.album].filter(Boolean).join(" · ")}
+              </span>
             </span>
             <span className="shrink-0 text-right text-xs text-(--text-faint)">
               <span className="block">

@@ -8,7 +8,13 @@ import { ThemeModeToggle } from "./ThemeModeToggle";
 
 function UserIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 20 20"
+      fill="currentColor"
+      aria-hidden="true"
+    >
       <circle cx="10" cy="6.5" r="3.5" />
       <path d="M3 17c0-3.6 3.1-6 7-6s7 2.4 7 6v.5H3V17z" />
     </svg>
@@ -47,10 +53,12 @@ export function ProfileMenu({ user }: { user: CurrentUser }) {
         <div className="absolute right-0 top-full z-20 mt-2 w-64 rounded-[10px] border border-(--hairline) bg-(--surface-strong) p-4 shadow-2xl shadow-black/25">
           <div className="border-b border-(--hairline) pb-3">
             <p className="truncate text-sm font-semibold text-(--text)">
-              {isGuest ? "Guest session" : user.displayName ?? "Player"}
+              {isGuest ? "Guest session" : (user.displayName ?? "Player")}
             </p>
             <p className="mt-1 text-xs text-(--text-faint)">
-              {isGuest ? "Progress stays on this device." : "Your progress is synced."}
+              {isGuest
+                ? "Progress stays on this device."
+                : "Your progress is synced."}
             </p>
           </div>
 
