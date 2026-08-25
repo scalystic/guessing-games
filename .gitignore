@@ -46,6 +46,14 @@ next-env.d.ts
 
 # ingest — licensed master audio and the real manifests describing it stay local
 /ingest/masters/
+/ingest/artwork/
 /ingest/out/
 /ingest/*.json
 !/ingest/manifest.example.json
+# songs
+/songs
+
+# temp
+
+# wrangler
+.wrangler/
