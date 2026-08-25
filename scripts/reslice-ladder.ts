@@ -2,13 +2,19 @@
 //
 //   npm run reslice
 //
-// The stored clips don't change: stage N is a byte-range prefix of one ~7s MP3,
+// The stored clips don't change: stage N is a byte-range prefix of one ~30s MP3,
 // so a new ladder only needs new frame-boundary offsets for the SAME bytes.
 // This script downloads each AUDIO_CLIP, verifies it against the stored
 // checksum, recomputes offsets against the game's current ladder, and commits
 // the new offsets together with the bumped Game.ladderRevision in one
 // transaction. In-flight runs on the old revision fail fast (the audio route
 // rejects revision mismatches) instead of hearing a stale slice.
+//
+// The 15s backup tail past the last rung is what makes this script useful for
+// more than reshuffling rungs. Any new ladder up to the stored 30s is reachable
+// from bytes already in the bucket — no masters, no re-encode, no re-upload.
+// Beyond 30s (or past a clamped clip's real length) computeLadderOffsets refuses,
+// and the only way through is a re-ingest.
 
 import 'dotenv/config'
 import { createHash } from 'node:crypto'
@@ -70,25 +76,36 @@ async function main() {
       fail(`${asset.storageKey}: checksum mismatch — object changed since ingest`)
     }
 
-    const lastOld = asset.stageByteOffsets[asset.stageByteOffsets.length - 1]
-    if (clip.length !== lastOld || clip.length !== asset.byteSize) {
+    const lastOld = asset.stageByteOffsets[asset.stageByteOffsets.length - 1]!
+    if (clip.length !== asset.byteSize) {
       fail(
-        `${asset.storageKey}: object is ${clip.length}B but old final offset is ${lastOld} ` +
-          `and byteSize is ${asset.byteSize} — stale asset row`,
+        `${asset.storageKey}: object is ${clip.length}B but byteSize is ` +
+          `${asset.byteSize} — stale asset row`,
+      )
+    }
+    // The old final offset must land inside the object. It no longer has to EQUAL
+    // its length: the clip carries a backup tail past the last rung, so
+    // offsets[last] < byteSize is the normal state.
+    if (lastOld > clip.length) {
+      fail(
+        `${asset.storageKey}: old final offset ${lastOld} is past the ${clip.length}B ` +
+          `object — stale asset row`,
       )
     }
 
-    const { offsets, actualMs } = computeLadderOffsets(clip, ladder)
+    // Throws if the new ladder asks for more audio than the object holds, which is
+    // the one failure a reslice genuinely cannot fix. The old final offset is NOT
+    // asserted against the new one — moving the last rung within the stored 30s is
+    // the whole point of keeping a tail.
+    const { offsets, actualMs, totalMs } = computeLadderOffsets(clip, ladder)
 
-    // Same window as ingest, so the final frame boundary must be unchanged.
-    if (offsets[offsets.length - 1] !== lastOld) {
-      fail(
-        `${asset.storageKey}: new final offset ${offsets[offsets.length - 1]} != ${lastOld}`,
-      )
-    }
-
+    const lastNew = offsets[offsets.length - 1]!
+    const tailMs = Math.round(totalMs - actualMs[actualMs.length - 1]!)
     console.log(
-      `  ok    ${asset.id} [${offsets.join(', ')}]B (stage 1 plays ${actualMs[0]}ms)`,
+      `  ok    ${asset.id} [${offsets.join(', ')}]B ` +
+        `(stage 1 plays ${actualMs[0]}ms, ${(tailMs / 1000).toFixed(1)}s tail left over` +
+        (lastNew === lastOld ? '' : `, final offset ${lastOld} -> ${lastNew}`) +
+        `)`,
     )
     updates.push({ id: asset.id, offsets })
   }

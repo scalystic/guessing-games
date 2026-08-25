@@ -120,11 +120,21 @@ export function scanFrames(buf: Buffer): Mp3Frame[] {
 export type LadderOffsets = {
   /// Exclusive end byte per ladder stage. Feed straight into
   /// PuzzleAsset.stageByteOffsets.
+  ///
+  /// The last entry is the end of the PLAYABLE window, which is shorter than the
+  /// stored clip: ingest keeps a backup tail past the ladder (see CLIP_WINDOW_MS
+  /// in scripts/ingest.ts), so `offsets[last] <= totalBytes`.
   offsets: number[]
   /// What each stage will ACTUALLY play, after rounding up to a frame boundary.
   /// Always >= the requested ms, never less — a stage must not underdeliver.
   actualMs: number[]
+  /// Duration of every complete frame in the buffer — the whole clip, backup tail
+  /// included, not just the part the ladder reaches.
   totalMs: number
+  /// End of the last COMPLETE frame. Encoders flush a final partial frame that no
+  /// decoder can use, and the reveal serves the whole object, so ingest trims here
+  /// rather than at buf.length: every stored byte stays decodable.
+  totalBytes: number
 }
 
 /// Map each cumulative ladder value to the end of the first frame that reaches
@@ -142,6 +152,7 @@ export function computeLadderOffsets(buf: Buffer, ladderMs: number[]): LadderOff
   if (frames.length === 0) throw new Error('no frames found')
 
   const totalMs = frames.reduce((sum, f) => sum + f.durationMs, 0)
+  const totalBytes = frames[frames.length - 1]!.end
   const target = ladderMs[ladderMs.length - 1]!
   if (totalMs + 1 < target) {
     throw new Error(
@@ -171,10 +182,9 @@ export function computeLadderOffsets(buf: Buffer, ladderMs: number[]): LadderOff
     throw new Error(`resolved ${offsets.length}/${ladderMs.length} stages`)
   }
 
-  // Offsets stop at the last frame the ladder actually reaches, which is usually
-  // SHORT of buf.length: encoders flush a final partial frame past the requested
-  // duration. The caller is expected to trim the buffer to offsets[last] so no
-  // stored byte is unreachable and byteSize == the final offset. Deliberately not
-  // clamped to buf.length here — that would bake the extra frame into stage 6.
-  return { offsets, actualMs, totalMs }
+  // Offsets stop at the last frame the ladder actually reaches, which is well
+  // short of totalBytes: the clip deliberately holds a backup tail past the last
+  // rung. The caller trims to totalBytes (not buf.length — the encoder's flush
+  // frame is partial and undecodable) and stores that as byteSize.
+  return { offsets, actualMs, totalMs, totalBytes }
 }

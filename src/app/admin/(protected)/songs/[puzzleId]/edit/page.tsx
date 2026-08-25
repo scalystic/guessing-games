@@ -43,6 +43,7 @@ export default async function EditSongPage({
             title: song.title,
             artist: song.artist,
             album: song.album,
+            movie: song.movie,
             releaseYear: song.releaseYear,
             genres: song.genres,
             aliases: song.aliases,

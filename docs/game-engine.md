@@ -8,7 +8,7 @@ every game and every mode; a game is configuration, a mode is a flag on `Run`.
 | Term | Meaning |
 | --- | --- |
 | **Puzzle** | One thing to guess. For songless, one song. |
-| **Reveal stage** | How much of the puzzle is unlocked. Stage 1 = 0.2s, stage 6 = 7s. Cumulative. |
+| **Reveal stage** | How much of the puzzle is unlocked. Stage 1 = 0.4s, stage 6 = 15s. Cumulative. |
 | **Attempt** | A guess or a skip. Both advance the stage. 6 per puzzle. |
 | **Round** | One puzzle inside a run. |
 | **Run** | One sitting. Daily = 10 rounds, 3 lives, and a third miss ends it. Practice/endless = unbounded; lives are counted but never end the run. |
@@ -83,8 +83,8 @@ stage 6, not a formality.
    backed by a catalog-wide search endpoint that has no idea what the current
    round is.
 2. **Audio is one stored object, sliced per stage on the way out.** A puzzle has a
-   single `AUDIO_CLIP` covering the full reveal window (7s), and the stage-N
-   response is a byte-range prefix of it — `bytes=0-(stageByteOffsets[N-1] - 1)`,
+   single `AUDIO_CLIP` holding a 30s cut, of which the ladder can unlock 15s, and
+   the stage-N response is a byte-range prefix of it — `bytes=0-(stageByteOffsets[N-1] - 1)`,
    with the offsets precomputed at ingest. The client is never handed a longer
    buffer than it earned, so there is nothing to scrub ahead into. Two
    consequences that are easy to get wrong:
@@ -93,6 +93,11 @@ stage 6, not a formality.
    - **`storageKey` must be content-addressed** (use `checksum`). The route
      proxies the range rather than redirecting, but if you ever do sign a direct
      URL, a key like `blank-space-taylor-swift.mp3` *is* the answer.
+   - **`stageByteOffsets[last]` is NOT the end of the object.** The clip carries a
+     15s backup tail past the final rung, which makes the ladder a data tunable up
+     to 30s (`npm run reslice`, no re-encode) and gives `?reveal=1` more than the
+     round could unlock. Anything asserting `offsets[last] == byteSize` predates
+     the 30s window and is wrong.
 3. **The client does not send `roundIndex`.** `guess` and `skip` act on
    `Run.currentRoundIndex`. Old rounds are unreachable by construction.
    - The one read that deliberately looks backwards is `audio?reveal=1`, which
@@ -272,7 +277,7 @@ for display — never treated as truth.
 ## v1 scope
 
 **Ship:** `DAILY` (10 songs) + `PRACTICE`, one board per day, guest play,
-server-authoritative rounds, one 7s clip per puzzle range-sliced per stage,
+server-authoritative rounds, one 30s clip per puzzle range-sliced per stage,
 XP/level, share card.
 
 **Schema present but unwired:** `ENDLESS`, `HintUsage`, coins, streak freezes,

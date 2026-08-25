@@ -10,6 +10,10 @@ export const SongMetadataSchema = z.object({
   title: z.string().trim().min(1, "Title is required.").max(300),
   artist: z.string().trim().min(1, "Artist is required.").max(300),
   album: z.string().trim().max(300).nullable().optional(),
+  // The film, when the song is from one. Not derived from `album`: that field
+  // holds the store's collection name, which is a film title plus a soundtrack
+  // qualifier for a film track and not a film at all for a single.
+  movie: z.string().trim().max(300).nullable().optional(),
   releaseYear: z.number().int().min(1850).max(2100).nullable().optional(),
   genres: z.array(z.string().trim().min(1)).default([]),
   aliases: z.array(z.string().trim().min(1)).default([]),

@@ -7,6 +7,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -111,12 +112,12 @@ export function isStorageConfigured(): boolean {
 ///
 /// This is the whole reveal mechanism: stage N of a puzzle is the first
 /// `PuzzleAsset.stageByteOffsets[N - 1]` bytes of its single clip. Only the
-/// requested bytes leave the bucket, so serving stage 1 moves ~3 KB and not the
-/// whole 112 KB file.
+/// requested bytes leave the bucket, so serving stage 1 moves ~6 KB and not the
+/// whole ~480 KB file.
 ///
-/// Buffered rather than streamed on purpose — the ceiling is one 7s clip, so
-/// there is nothing to gain from a stream and a known length lets the caller set
-/// an exact Content-Length.
+/// Buffered rather than streamed on purpose — the ceiling is one 30s clip at
+/// 128kbps mono, so there is nothing to gain from a stream and a known length
+/// lets the caller set an exact Content-Length.
 export async function readPrefix(key: string, endExclusive: number): Promise<Uint8Array> {
   if (!Number.isInteger(endExclusive) || endExclusive <= 0) {
     throw new Error(`readPrefix needs a positive integer length, got ${endExclusive}`);
@@ -213,4 +214,32 @@ export async function putObject(
 export async function deleteObject(key: string): Promise<void> {
   const { client, config } = storage();
   await client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: key }));
+}
+
+export type StoredObject = { key: string; size: number; lastModified?: Date };
+
+/// Every object under `prefix` (all of them when omitted), following the
+/// continuation token to the end. A single ListObjectsV2 caps at 1000 keys, so a
+/// non-paginating version silently under-reports once a bucket outgrows that —
+/// which is exactly the case where an inventory matters.
+export async function listObjects(prefix?: string): Promise<StoredObject[]> {
+  const { client, config } = storage();
+  const out: StoredObject[] = [];
+  let token: string | undefined;
+
+  do {
+    const page = await client.send(
+      new ListObjectsV2Command({
+        Bucket: config.bucket,
+        Prefix: prefix,
+        ContinuationToken: token,
+      }),
+    );
+    for (const o of page.Contents ?? []) {
+      if (o.Key) out.push({ key: o.Key, size: o.Size ?? 0, lastModified: o.LastModified });
+    }
+    token = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (token);
+
+  return out;
 }

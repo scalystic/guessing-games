@@ -3,9 +3,9 @@
 //   npm run ingest -- --manifest ./ingest/sample.json --dry-run
 //   npm run ingest -- --manifest ./ingest/sample.json
 //
-// Per track: cut the reveal window out of the master, normalise loudness, encode
-// to a bare CBR MP3, walk its frames to find each stage's byte offset, upload it
-// content-addressed, and upsert Puzzle + Song + PuzzleAsset.
+// Per track: cut a CLIP_WINDOW_MS window out of the master, normalise loudness,
+// encode to a bare CBR MP3, walk its frames to find each stage's byte offset,
+// upload it content-addressed, and upsert Puzzle + Song + PuzzleAsset.
 //
 // Idempotent. Re-running the same manifest re-cuts and re-uploads, but the
 // Puzzle upsert is keyed on (gameId, ingestSource, ingestRef) so it updates in
@@ -16,10 +16,13 @@
 // ---------------------------------------------------------------------------
 // Two things this pipeline can't fix, by design:
 //
-// 1. FADE-OUT. Stages 1-5 are byte-range PREFIXES of this file, so they end
-//    wherever the range ends — a fade baked into the file only ever softens
-//    stage 6. Every earlier stage stops dead. The client must ramp gain down
-//    over the last ~15ms of whatever it was served. Presentation, not content.
+// 1. FADE-OUT. Every in-play stage is a byte-range PREFIX of this file, so it
+//    ends wherever the range ends and a fade baked into the file can never
+//    reach it. Every stage stops dead. The client must ramp gain down over the
+//    last ~15ms of whatever it was served. Presentation, not content. (Only the
+//    ?reveal=1 playback, which serves the whole object, reaches the file's own
+//    end — and it plays out over the backup tail, so there is nothing abrupt
+//    there to soften.)
 //
 // 2. ENCODER DELAY. LAME pads roughly 576 samples (~13ms) of silence at the
 //    head, and with the Xing/LAME tag suppressed no decoder can compensate. The
@@ -42,6 +45,7 @@ import { PrismaClient } from '../src/generated/prisma/client'
 import { isStorageConfigured, objectSize, putObject } from '../src/lib/storage'
 import { buildSearchText, computeDecade } from '../src/lib/catalog/search-text'
 import { computeLadderOffsets } from './lib/mp3'
+import { ARTWORK_EXTENSION, ARTWORK_MIME } from './lib/artwork'
 
 const run = promisify(execFile)
 
@@ -58,6 +62,26 @@ const SAMPLE_RATE = 44100
 const CHANNELS = 1
 const FADE_IN_SECONDS = 0.01
 
+/// How much audio we CUT AND STORE per track, independent of how much the reveal
+/// ladder can ever unlock.
+///
+/// The ladder tops out at 15s, so the last 15s of this is a backup tail that no
+/// in-play stage can reach. Two things pay for it:
+///
+///   1. Retuning the ladder stops meaning a re-ingest. `npm run reslice` rescans
+///      the stored frames and writes new offsets — but it can only ever point at
+///      audio that is already in the bucket. When the stored clip ended exactly
+///      at the last rung, ANY upward change to the ladder needed the masters
+///      back, re-encoded and re-uploaded, for all 36 tracks. Now the ladder is a
+///      genuine data tunable up to 30s.
+///   2. The ?reveal=1 playback serves the whole object, so the result panel gets
+///      30s of the song rather than the 15s the round could have unlocked.
+///
+/// Clamped per track to what the master actually has past hookStartMs — a hook
+/// 20s from the end yields a shorter clip, not a failed ingest. Only dropping
+/// below the last rung is fatal.
+const CLIP_WINDOW_MS = 30_000
+
 /// EBU R128 target. Consistency across the catalog matters more than the exact
 /// number — stage 1 of one song has to be as audible as stage 1 of any other.
 const LOUDNORM = { I: -16, TP: -1.5, LRA: 11 }
@@ -69,10 +93,19 @@ const LOUDNORM = { I: -16, TP: -1.5, LRA: 11 }
 const TrackSchema = z.object({
   /// Path to the master, relative to the manifest file.
   file: z.string().min(1),
+  /// Pre-encoded square cover, relative to the manifest file. Written by
+  /// `npm run metadata`; optional, because a puzzle is perfectly playable
+  /// without art — the reveal just falls back to a generated gradient.
+  artworkFile: z.string().nullish(),
 
   title: z.string().min(1),
   artist: z.string().min(1),
   album: z.string().nullish(),
+  /// The film this track is from, if any. Bare film title — `album` keeps the
+  /// store's collection name, soundtrack qualifier and all. Left null for a
+  /// single or a non-film album; `npm run metadata` only fills it when the
+  /// store marked the track as a film track.
+  movie: z.string().nullish(),
   releaseYear: z.number().int().min(1850).max(2100).nullish(),
   genres: z.array(z.string()).default([]),
   /// Accepted alternate titles for the typeahead.
@@ -213,27 +246,61 @@ type Prepared = {
   storageKey: string
   stageByteOffsets: number[]
   actualMs: number[]
+  /// Length of the STORED clip, backup tail included — not the last rung.
   durationMs: number
+  /// What the ladder can actually unlock, for the ingest log. Equals the last
+  /// entry of actualMs.
+  playableMs: number
   /// Length of the source track, for Song.durationMs. Distinct from the clip's
   /// own durationMs on PuzzleAsset.
   masterMs: number
+  /// Null when the manifest has no artworkFile for this track.
+  artwork: PreparedArtwork | null
+}
+
+type PreparedArtwork = {
+  data: Buffer
+  checksum: string
+  storageKey: string
+}
+
+/// Read the cover the metadata step already encoded, and key it by content.
+///
+/// Uploaded as-is, with no re-encoding: `npm run metadata` owns the format and
+/// dimensions, and what sits on disk is exactly what a human reviewed. Doing the
+/// conversion here as well would mean two places could disagree about what a
+/// cover looks like.
+async function prepareArtwork(path: string): Promise<PreparedArtwork> {
+  const data = await readFile(path)
+  const checksum = createHash('sha256').update(data).digest('hex')
+
+  // Content-addressed for the same reason the audio is, and it matters just as
+  // much: the cover IS the answer, so a key built from the title would give the
+  // round away to anyone reading a URL.
+  return { data, checksum, storageKey: `songless/artwork/${checksum}.${ARTWORK_EXTENSION}` }
 }
 
 async function prepare(
   track: Track,
   masterPath: string,
+  artworkPath: string | null,
   ladder: number[],
   workDir: string,
 ): Promise<Prepared> {
-  const windowMs = ladder[ladder.length - 1]!
+  const playableWindowMs = ladder[ladder.length - 1]!
 
   const masterMs = await probeDurationMs(masterPath)
-  if (track.hookStartMs + windowMs > masterMs) {
+  const available = masterMs - track.hookStartMs
+
+  // Short of the last rung is unplayable and therefore fatal. Short of the full
+  // 30s only costs backup tail, so it degrades quietly — see CLIP_WINDOW_MS.
+  if (available < playableWindowMs) {
     throw new Error(
-      `hookStartMs ${track.hookStartMs} + ${windowMs}ms window exceeds the ` +
-        `${masterMs}ms master — lower hookStartMs`,
+      `hookStartMs ${track.hookStartMs} leaves ${available}ms of the ${masterMs}ms ` +
+        `master, but the ladder needs ${playableWindowMs}ms — lower hookStartMs`,
     )
   }
+  const windowMs = Math.min(CLIP_WINDOW_MS, available)
 
   const stats = await measureLoudness(masterPath, track.hookStartMs, windowMs)
   if (!stats) {
@@ -244,13 +311,13 @@ async function prepare(
   await encodeClip(masterPath, outPath, track.hookStartMs, windowMs, stats)
 
   const encoded = await readFile(outPath)
-  const { offsets, actualMs } = computeLadderOffsets(encoded, ladder)
+  const { offsets, actualMs, totalMs, totalBytes } = computeLadderOffsets(encoded, ladder)
 
-  // Trim the encoder's flush frame. libmp3lame emits one frame past the requested
-  // duration, and storing it would mean stage 6 serves ~26ms that the ladder never
-  // asked for while byteSize disagreed with the final offset.
-  const lastOffset = offsets[offsets.length - 1]!
-  const clip = encoded.subarray(0, lastOffset)
+  // Trim to the last COMPLETE frame, not to the last ladder offset: everything
+  // past the final rung is the backup tail and has to survive into the bucket.
+  // libmp3lame's flush frame is partial and undecodable, so storing it would only
+  // put bytes in the ?reveal=1 response that no decoder can use.
+  const clip = encoded.subarray(0, totalBytes)
 
   // Content-addressed, and hashed AFTER the trim so the key identifies exactly
   // the bytes we serve. A key built from title/artist would leak the answer the
@@ -264,9 +331,12 @@ async function prepare(
     storageKey: `songless/clips/${checksum}.mp3`,
     stageByteOffsets: offsets,
     actualMs,
-    // What the file actually holds, not what the ladder asked for.
-    durationMs: Math.round(actualMs[actualMs.length - 1]!),
+    // What the file actually holds, not what the ladder asked for. The reveal
+    // serves the whole object, so this is the duration a player can hear.
+    durationMs: Math.round(totalMs),
+    playableMs: Math.round(actualMs[actualMs.length - 1]!),
     masterMs,
+    artwork: artworkPath ? await prepareArtwork(artworkPath) : null,
   }
 }
 
@@ -276,13 +346,14 @@ async function persist(
   ladderRevision: number,
   prepared: Prepared,
 ): Promise<void> {
-  const { track, clip, checksum, storageKey, stageByteOffsets, durationMs, masterMs } =
+  const { track, clip, checksum, storageKey, stageByteOffsets, durationMs, masterMs, artwork } =
     prepared
 
   const songFields = {
     title: track.title,
     artist: track.artist,
     album: track.album ?? null,
+    movie: track.movie ?? null,
     releaseYear: track.releaseYear ?? null,
     decade: computeDecade(track.releaseYear),
     genres: track.genres,
@@ -344,6 +415,27 @@ async function persist(
       create: { puzzleId: puzzle.id, ...assetFields },
       update: assetFields,
     })
+
+    if (artwork) {
+      // stageByteOffsets stays empty and ladderRevision keeps its default: both
+      // describe the reveal ladder, which an image has no part in. The cover is
+      // all-or-nothing, served once the round is already resolved.
+      const imageFields = {
+        kind: 'IMAGE' as const,
+        storageKey: artwork.storageKey,
+        mimeType: ARTWORK_MIME,
+        durationMs: null,
+        byteSize: artwork.data.length,
+        checksum: artwork.checksum,
+        stageByteOffsets: [],
+      }
+
+      await tx.puzzleAsset.upsert({
+        where: { puzzleId_kind: { puzzleId: puzzle.id, kind: 'IMAGE' } },
+        create: { puzzleId: puzzle.id, ...imageFields },
+        update: imageFields,
+      })
+    }
   })
 }
 
@@ -397,6 +489,16 @@ async function main() {
     )
   }
 
+  // Caught here rather than per track, because it is a config mistake and not a
+  // property of any one master: every single track would fail the same way.
+  const lastRung = ladder[ladder.length - 1]!
+  if (lastRung > CLIP_WINDOW_MS) {
+    throw new Error(
+      `revealLadder tops out at ${lastRung}ms but the clip window is only ` +
+        `${CLIP_WINDOW_MS}ms — raise CLIP_WINDOW_MS in this script`,
+    )
+  }
+
   if (!skipUpload && !isStorageConfigured()) {
     throw new Error(
       'object storage is not configured — set S3_ENDPOINT / S3_BUCKET / ' +
@@ -410,6 +512,7 @@ async function main() {
 
   console.log(
     `${manifest.gameSlug}: ${manifest.tracks.length} track(s), ` +
+      `${CLIP_WINDOW_MS / 1000}s clip window, ` +
       `ladder [${ladder.join(', ')}]ms, rev ${game.ladderRevision}` +
       (dryRun ? '  (DRY RUN — no upload, no writes)' : skipUpload ? '  (metadata only — no upload)' : ''),
   )
@@ -422,7 +525,8 @@ async function main() {
       const label = `${track.artist} — ${track.title}`
       try {
         const masterPath = resolve(manifestDir, track.file)
-        const prepared = await prepare(track, masterPath, ladder, workDir)
+        const artworkPath = track.artworkFile ? resolve(manifestDir, track.artworkFile) : null
+        const prepared = await prepare(track, masterPath, artworkPath, ladder, workDir)
 
         if (outDir) {
           await writeFile(join(outDir, basename(prepared.storageKey)), prepared.clip)
@@ -442,6 +546,17 @@ async function main() {
             })
             uploaded = 'uploaded'
           }
+
+          if (prepared.artwork) {
+            const art = prepared.artwork
+            const existingArt = await objectSize(art.storageKey)
+            if (existingArt !== art.data.length) {
+              await putObject(art.storageKey, art.data, {
+                contentType: ARTWORK_MIME,
+                sha256Hex: art.checksum,
+              })
+            }
+          }
         }
 
         if (!dryRun) {
@@ -451,8 +566,21 @@ async function main() {
         const stages = prepared.stageByteOffsets
           .map((byte, i) => `${prepared.actualMs[i]!.toFixed(0)}ms/${byte}B`)
           .join('  ')
+        const art = prepared.artwork
+          ? `art ${Math.round(prepared.artwork.data.length / 1024)}KB`
+          : 'art none'
+        // Flag a clamped window: the tail is thinner than CLIP_WINDOW_MS asked
+        // for, which is legal but worth seeing in the log.
+        const backupMs = prepared.durationMs - prepared.playableMs
+        const clamped = prepared.durationMs < CLIP_WINDOW_MS - 100 ? ' CLAMPED' : ''
         console.log(`  ok  ${label}  [${uploaded}]`)
-        console.log(`      pop ${track.seedPopularity} · ${prepared.clip.length}B · ${stages}`)
+        console.log(
+          `      pop ${track.seedPopularity} · ${prepared.clip.length}B · ` +
+            `${(prepared.durationMs / 1000).toFixed(1)}s stored ` +
+            `(${(prepared.playableMs / 1000).toFixed(1)}s playable + ` +
+            `${(backupMs / 1000).toFixed(1)}s backup${clamped}) · ${art}`,
+        )
+        console.log(`      ${stages}`)
         ok++
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)

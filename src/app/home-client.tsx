@@ -141,7 +141,7 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
               </p>
             </div>
             <p className="mt-1.5 truncate pl-4 font-mono text-[9px] uppercase tracking-[0.18em] text-(--text-faint)">
-              The seven-second song game
+              The fifteen-second song game
             </p>
           </div>
 

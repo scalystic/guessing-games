@@ -25,7 +25,10 @@
     "db:reset": "prisma migrate reset --force",
     "db:studio": "prisma studio",
     "db:validate": "prisma validate",
-    "db:format": "prisma format"
+    "db:format": "prisma format",
+    "metadata": "tsx scripts/fetch-metadata.ts",
+    "purge:catalog": "tsx scripts/purge-catalog.ts",
+    "purge:storage": "tsx scripts/purge-storage.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1115.0",
@@ -38,6 +41,7 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
+    "sharp": "^0.35.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {

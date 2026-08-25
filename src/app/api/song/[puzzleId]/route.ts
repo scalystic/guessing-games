@@ -63,6 +63,7 @@ export async function PUT(request: Request, { params }: RouteParams): Promise<Re
           title: data.title,
           artist: data.artist,
           album: data.album ?? null,
+          movie: data.movie ?? null,
           releaseYear: data.releaseYear ?? null,
           decade,
           genres: data.genres,

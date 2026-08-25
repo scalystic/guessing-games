@@ -7,16 +7,21 @@ import { readPrefix } from "@/lib/storage";
 ///
 /// The whole reveal mechanism lives here: a puzzle has ONE stored clip, and
 /// stage N is the first `stageByteOffsets[N - 1]` bytes of it. Only those bytes
-/// leave the bucket, so stage 1 moves ~3 KB rather than the full 112 KB — there
-/// is nothing further along in the response for a player to scrub into.
+/// leave the bucket, so stage 1 moves ~6 KB rather than the full ~480 KB — there
+/// is nothing further along in the response for a player to scrub into. That
+/// matters more now than it used to: the stored clip holds 30s but the ladder
+/// only ever unlocks 15s, so half of every object is audio no in-play request is
+/// entitled to.
 ///
 /// Note what is NOT in the URL: no puzzleId, no stage. Both are read server-side
 /// from Run.currentRoundIndex and RunRound.stageReached, so a client cannot ask
 /// for a later stage by editing a path (docs/game-engine.md, authority #3/#4).
 ///
 /// `?reveal=1` is the one exception, and it does not weaken that. It serves the
-/// WHOLE clip for the most recently RESOLVED round — the answer the result panel
-/// is already displaying. It cannot reach an unresolved round at all, so there is
+/// WHOLE stored clip for the most recently RESOLVED round — all 30s, including
+/// the backup tail past the last rung that no in-play stage can reach. That is
+/// the answer the result panel is already displaying. It cannot reach an
+/// unresolved round at all, so there is
 /// no stage to skip ahead to: the only audio it can unlock belongs to a puzzle
 /// the player has already been told the answer to. The round is picked as
 /// "latest resolved for this run" rather than "the current round, if resolved"
@@ -69,7 +74,12 @@ export async function GET(
         select: {
           assets: {
             where: { kind: "AUDIO_CLIP" as const },
-            select: { storageKey: true, stageByteOffsets: true, ladderRevision: true },
+            select: {
+              storageKey: true,
+              stageByteOffsets: true,
+              ladderRevision: true,
+              byteSize: true,
+            },
           },
         },
       },
@@ -114,16 +124,20 @@ export async function GET(
       );
     }
 
-    // The last offset is the end of the stored clip, so the reveal serves the
-    // whole thing regardless of how far the player actually got.
+    // The reveal serves byteSize, NOT the last stage offset: the stored clip runs
+    // past the final rung (30s stored, 15s reachable in play), and stopping at the
+    // last offset would throw the backup tail away for the one caller entitled to
+    // it. byteSize is nullable in the schema, so fall back to the last rung —
+    // that is the pre-backup-tail behaviour and is always safe.
     const servedStage = reveal ? asset.stageByteOffsets.length : round.stageReached;
-    const endExclusive = asset.stageByteOffsets[servedStage - 1];
-    if (endExclusive === undefined) {
+    const stageEnd = asset.stageByteOffsets[servedStage - 1];
+    if (stageEnd === undefined) {
       return internalErrorJson(
         "runs.audio",
         new Error(`stage ${servedStage} exceeds ${asset.stageByteOffsets.length} offsets`),
       );
     }
+    const endExclusive = reveal ? (asset.byteSize ?? stageEnd) : stageEnd;
 
     const bytes = await readPrefix(asset.storageKey, endExclusive);
 

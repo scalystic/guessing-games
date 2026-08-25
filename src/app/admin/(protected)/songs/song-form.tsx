@@ -8,6 +8,7 @@ export type SongFormInitial = {
   title: string;
   artist: string;
   album: string | null;
+  movie: string | null;
   releaseYear: number | null;
   genres: string[];
   aliases: string[];
@@ -32,6 +33,7 @@ type FieldValues = {
   title: string;
   artist: string;
   album: string;
+  movie: string;
   releaseYear: string;
   genres: string;
   aliases: string;
@@ -51,6 +53,7 @@ function toFieldValues(initial: SongFormInitial): FieldValues {
     title: initial.title,
     artist: initial.artist,
     album: initial.album ?? "",
+    movie: initial.movie ?? "",
     releaseYear: initial.releaseYear != null ? String(initial.releaseYear) : "",
     genres: initial.genres.join(", "),
     aliases: initial.aliases.join(", "),
@@ -96,6 +99,7 @@ export default function SongForm({ puzzleId, initial }: Props) {
       title: values.title,
       artist: values.artist,
       album: values.album || null,
+      movie: values.movie || null,
       releaseYear: values.releaseYear ? Number(values.releaseYear) : null,
       genres: values.genres
         .split(",")
@@ -178,6 +182,13 @@ export default function SongForm({ puzzleId, initial }: Props) {
           value={values.album}
           onChange={(v) => setField("album", v)}
           error={fieldErrors.album}
+        />
+        <Field
+          name="movie"
+          label="Movie (leave blank if not from a film)"
+          value={values.movie}
+          onChange={(v) => setField("movie", v)}
+          error={fieldErrors.movie}
         />
         <Field
           name="releaseYear"

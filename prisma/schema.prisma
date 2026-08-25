@@ -213,8 +213,15 @@ enum AssetKind {
 }
 
 /// ONE row per puzzle per asset kind. For songless that means a single
-/// AUDIO_CLIP holding the whole reveal window (max(Game.revealLadder), 7s today)
-/// plus an IMAGE for the post-resolve artwork.
+/// AUDIO_CLIP holding a 30s cut from Song.hookStartMs, plus an IMAGE for the
+/// post-resolve artwork.
+///
+/// The clip is deliberately LONGER than the reveal ladder can unlock
+/// (max(Game.revealLadder), 15s today). The surplus is a backup tail: it makes
+/// the ladder a real data tunable up to 30s — `npm run reslice` recomputes
+/// offsets over bytes already in the bucket, no masters and no re-upload — and
+/// the ?reveal=1 playback hands the whole 30s to the result panel. Nothing in
+/// play can reach past the last rung.
 ///
 /// There is no per-stage row and no per-stage upload: the ladder is served by
 /// byte-range slicing this one file (see stageByteOffsets). Stage N is a prefix
@@ -231,17 +238,24 @@ model PuzzleAsset {
   kind       AssetKind
   storageKey String
   mimeType   String?
-  /// Full length of the stored clip. For AUDIO_CLIP this should equal
-  /// max(Game.revealLadder) — the stage-6 reveal IS the whole file.
+  /// Full length of the stored clip, backup tail included — NOT max(revealLadder).
+  /// For AUDIO_CLIP this is the 30s window, or less where the master ran out past
+  /// hookStartMs. It is what ?reveal=1 plays, so it is the duration a player can
+  /// actually hear.
   durationMs Int?
+  /// Byte length of the stored object, and the exclusive end ?reveal=1 serves.
   byteSize   Int?
   checksum   String?
 
   /// AUDIO_CLIP only. Frame-aligned exclusive end offset per reveal stage,
   /// computed at ingest against Game.revealLadder. Serving stage N is
-  /// `bytes=0-(stageByteOffsets[N-1] - 1)`; the last entry equals byteSize.
+  /// `bytes=0-(stageByteOffsets[N-1] - 1)`.
   /// Precomputed rather than derived at request time because CBR MP3 frames
   /// alternate size via the padding bit, so ms→byte math is not exact.
+  ///
+  /// The last entry is the end of the PLAYABLE window and is strictly LESS than
+  /// byteSize — everything between the two is the backup tail. (It equalled
+  /// byteSize before the 30s window landed; code asserting that is stale.)
   stageByteOffsets Int[]
   /// Which Game.ladderRevision these offsets were cut against. If it drifts from
   /// the game's current value the offsets are stale and must be recomputed —
@@ -263,6 +277,20 @@ model Song {
   title  String
   artist String
   album  String?
+  /// The film this track is from, when it is from one at all. Null for a
+  /// single or a non-film album — most of the catalog outside Bollywood.
+  ///
+  /// Separate from `album` on purpose. `album` is the literal store
+  /// collection ("Saiyaara (Original Motion Picture Soundtrack)"), which for
+  /// a film track is the film plus noise and for an indie single is not a
+  /// film at all — so it can neither be shown as a film name nor filtered on.
+  /// This holds the bare film title, and only when something actually
+  /// identified the track as a film track.
+  ///
+  /// Deliberately NOT part of searchText: the typeahead matches what a player
+  /// is guessing, and letting a film name surface its songs would hand over
+  /// answers.
+  movie  String?
 
   releaseYear Int?
   decade      Int?

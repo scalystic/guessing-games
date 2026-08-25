@@ -3,7 +3,7 @@
 //   npm run hooks -- --manifest ./ingest/manifest.json
 //   npm run hooks -- --manifest ./ingest/manifest.json --write
 //
-// Stage 1 of a round is 200ms. Left at hookStartMs=0 that lands on an intro pad
+// Stage 1 of a round is 400ms. Left at hookStartMs=0 that lands on an intro pad
 // or dead air and the round is unplayable for everyone, so every track needs a
 // start point past the intro. Scrubbing a catalog by hand is the accurate way;
 // this is the first pass that makes the hand pass cheap.
@@ -16,7 +16,7 @@
 //
 // This finds full arrangement, NOT the vocal hook — they usually coincide, but a
 // track with a loud instrumental break before the vocal will land on the break.
-// That is why --write also exports a named 7s preview per track: the output is a
+// That is why --write also exports a named 15s preview per track: the output is a
 // draft to listen to and correct, not a final answer.
 
 import { execFile } from 'node:child_process'
@@ -34,9 +34,14 @@ const run = promisify(execFile)
 /// ebur128 emits one momentary reading per 100ms. Not configurable in the filter.
 const FRAME_MS = 100
 
-/// The reveal window every stage is a prefix of. Must match the last rung of the
-/// game's revealLadder, and bounds how late a hook can start.
-const WINDOW_MS = 7000
+/// The PLAYABLE window every stage is a prefix of. Must match the last rung of
+/// the game's revealLadder, and bounds how late a hook can start.
+///
+/// Deliberately the ladder's 15s and not ingest's 30s CLIP_WINDOW_MS. The stored
+/// clip is longer than this, but the extra is a backup tail the player never
+/// hears in play, and ingest clamps it per track — so it must not constrain where
+/// the hook goes, and energy held across it says nothing about playability.
+const WINDOW_MS = 15000
 
 /// "Full energy" reference. A high percentile rather than the max, so one clipped
 /// transient or a single loud snare hit can't define the whole track's level.
@@ -119,7 +124,7 @@ type Detection = {
   hookStartMs: number
   /// Reference level the threshold was derived from.
   referenceLufs: number
-  /// Share of the full 7s window from the chosen point that clears the threshold.
+  /// Share of the full 15s window from the chosen point that clears the threshold.
   ///
   /// Measured over the whole window rather than the sustain probe on purpose: the
   /// probe's own coverage is always exactly SUSTAIN_RATIO at the point it first
@@ -132,7 +137,7 @@ type Detection = {
 }
 
 function detect(loudness: number[], masterMs: number): Detection {
-  /// A hook can't start so late that the 7s window runs past the end.
+  /// A hook cannot start so late that the playable window runs past the end.
   const latestStartMs = Math.max(0, masterMs - WINDOW_MS)
 
   const music = loudness.filter((v) => v > SILENCE_LUFS)
@@ -200,12 +205,12 @@ function detect(loudness: number[], masterMs: number): Detection {
 // Preview
 // ---------------------------------------------------------------------------
 
-/// A listenable copy of the 7s window, named by ingestRef.
+/// A listenable copy of the playable window, named by ingestRef.
 ///
 /// Deliberately NOT the bare headerless stream the ingest produces: that file is
 /// shaped for byte-range serving and named by content hash, which is unreviewable.
 /// This one keeps its headers so any player handles it, and stage 1 is simply its
-/// first 200ms.
+/// first 400ms.
 async function writePreview(
   source: string,
   destination: string,
@@ -336,7 +341,7 @@ async function main() {
   if (values.write) {
     await writeFile(manifestPath, `${JSON.stringify(raw, null, 2)}\n`)
     console.log(`\n${changed} hookStartMs updated in ${values.manifest}`)
-    if (wantPreviews) console.log(`7s previews in ${outDir} — listen, then hand-correct outliers`)
+    if (wantPreviews) console.log(`15s previews in ${outDir} — listen, then hand-correct outliers`)
   } else {
     console.log(`\n${changed} would change. Re-run with --write to apply.`)
   }
