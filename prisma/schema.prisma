@@ -83,6 +83,8 @@ model Player {
   leaderboardEntries LeaderboardEntry[]
   claimedAsGuest     GuestClaim?           @relation("ClaimGuestSide")
   claimsMade         GuestClaim[]          @relation("ClaimUserSide")
+  hostedRooms        MultiplayerRoom[]     @relation("RoomHost")
+  multiplayerRooms   MultiplayerRoomPlayer[]
 
   @@index([kind, lastSeenAt])
 }
@@ -156,6 +158,7 @@ model Game {
   dailyChallenges    DailyChallenge[]
   playerStats        PlayerGameStat[]
   leaderboardEntries LeaderboardEntry[]
+  multiplayerRooms   MultiplayerRoom[]
 }
 
 // ============================================================
@@ -193,12 +196,13 @@ model Puzzle {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  game            Game                   @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  song            Song?
-  assets          PuzzleAsset[]
-  rounds          RunRound[]
-  playerHistory   PlayerPuzzleHistory[]
-  dailyAppearance DailyChallengePuzzle[]
+  game              Game                   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  song              Song?
+  assets            PuzzleAsset[]
+  rounds            RunRound[]
+  playerHistory     PlayerPuzzleHistory[]
+  dailyAppearance   DailyChallengePuzzle[]
+  multiplayerRounds MultiplayerRound[]
 
   /// The sampling index: active puzzles for a game ordered by popularity.
   @@index([gameId, isActive, isBlocked, popularity])
@@ -371,6 +375,8 @@ enum RunMode {
   PRACTICE
   /// Unlimited, random songs, lives, ranked. Ships after v1.
   ENDLESS
+  /// Shared room session: up to 5 players on the same puzzles.
+  MULTIPLAYER
 }
 
 enum RunStatus {
@@ -392,6 +398,7 @@ model Run {
   /// leaving practice/endless runs unlimited. No partial index needed.
   dayKey           String?
   dailyChallengeId String?
+  multiplayerRoomId String?
 
   /// Drives puzzle selection for PRACTICE/ENDLESS; copied from the challenge
   /// for DAILY. Persisted so a run is always reproducible.
@@ -433,12 +440,14 @@ model Run {
   clientIpHash  String?
   userAgentHash String?
 
-  game           Game            @relation(fields: [gameId], references: [id])
-  player         Player          @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  dailyChallenge DailyChallenge? @relation(fields: [dailyChallengeId], references: [id])
-  rounds         RunRound[]
-  hints          HintUsage[]
-  ledger         LedgerEntry[]
+  game            Game                   @relation(fields: [gameId], references: [id])
+  player          Player                 @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  dailyChallenge  DailyChallenge?        @relation(fields: [dailyChallengeId], references: [id])
+  multiplayerRoom MultiplayerRoom?       @relation("RoomRuns", fields: [multiplayerRoomId], references: [id])
+  multiplayerPlayer MultiplayerRoomPlayer?
+  rounds          RunRound[]
+  hints           HintUsage[]
+  ledger          LedgerEntry[]
 
   /// One daily per player/game/day. Practice + endless unaffected (NULL).
   @@unique([playerId, gameId, dayKey])
@@ -610,6 +619,9 @@ model PlayerGameStat {
 
   xp Int @default(0)
 
+  multiplayerRunsPlayed Int @default(0)
+  multiplayerWins       Int @default(0)
+
   updatedAt DateTime @updatedAt
 
   player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
@@ -673,4 +685,85 @@ model LeaderboardEntry {
   @@unique([gameId, boardType, periodKey, playerId])
   /// The board read: ORDER BY score DESC, tieBreakRevealMs ASC.
   @@index([gameId, boardType, periodKey, score])
+}
+
+// ============================================================
+// Multiplayer
+// ============================================================
+
+enum RoomStatus {
+  WAITING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum RoomPlayerStatus {
+  WAITING
+  READY
+  PLAYING
+  DISCONNECTED
+  LEFT
+}
+
+/// A shared game session where 2-5 players compete on the same puzzles.
+model MultiplayerRoom {
+  id           String     @id @default(cuid())
+  /// 6-char alphanumeric code for sharing. e.g. "ABC123"
+  code         String     @unique @db.Char(6)
+  gameId       String
+  hostPlayerId String
+  status       RoomStatus @default(WAITING)
+  maxPlayers   Int        @default(5)
+  totalRounds  Int        @default(5)
+  currentRound Int        @default(0)
+  seed         String
+  createdAt    DateTime   @default(now())
+  startsAt     DateTime?
+  completedAt  DateTime?
+  expiresAt    DateTime
+
+  game    Game                    @relation(fields: [gameId], references: [id])
+  host    Player                  @relation("RoomHost", fields: [hostPlayerId], references: [id])
+  players MultiplayerRoomPlayer[]
+  rounds  MultiplayerRound[]
+  runs    Run[]                   @relation("RoomRuns")
+
+  @@index([status, expiresAt])
+}
+
+/// One row per player in a room.
+model MultiplayerRoomPlayer {
+  id            String           @id @default(cuid())
+  roomId        String
+  playerId      String
+  status        RoomPlayerStatus @default(WAITING)
+  seatIndex     Int
+  runId         String?          @unique
+  score         Int              @default(0)
+  roundsSolved  Int              @default(0)
+  totalRevealMs Int              @default(0)
+  isWinner      Boolean          @default(false)
+  joinedAt      DateTime         @default(now())
+  finishedAt    DateTime?
+
+  room   MultiplayerRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  player Player          @relation(fields: [playerId], references: [id])
+  run    Run?            @relation(fields: [runId], references: [id])
+
+  @@unique([roomId, playerId])
+  @@unique([roomId, seatIndex])
+}
+
+/// Pre-selected puzzle for each round in a multiplayer room. All players get the same puzzle per round.
+model MultiplayerRound {
+  id         String @id @default(cuid())
+  roomId     String
+  roundIndex Int
+  puzzleId   String
+
+  room   MultiplayerRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  puzzle Puzzle          @relation(fields: [puzzleId], references: [id])
+
+  @@unique([roomId, roundIndex])
 }

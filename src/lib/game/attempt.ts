@@ -321,6 +321,7 @@ type LockedRow = {
   rounds_solved: number;
   player_id: string;
   game_id: string;
+  multiplayer_room_id: string | null;
   max_attempts: number;
   reveal_ladder: unknown;
   ladder_revision: number;
@@ -360,6 +361,7 @@ async function lockAndRead(tx: Tx, runId: string): Promise<LockedRow> {
       r."roundsSolved"        AS rounds_solved,
       r."playerId"            AS player_id,
       r."gameId"              AS game_id,
+      r."multiplayerRoomId"   AS multiplayer_room_id,
       g."maxAttempts"         AS max_attempts,
       g."revealLadder"        AS reveal_ladder,
       g."ladderRevision"      AS ladder_revision,
@@ -418,6 +420,7 @@ type RunFacts = {
   playerId: string;
   gameId: string;
   mode: RunMode;
+  multiplayerRoomId: string | null;
   livesRemaining: number;
   maxRounds: number | null;
   currentStreak: number;
@@ -471,6 +474,7 @@ function facts(row: LockedRow, runId: string): { run: RunFacts; round: RoundFact
       playerId: row.player_id,
       gameId: row.game_id,
       mode: row.mode as RunMode,
+      multiplayerRoomId: row.multiplayer_room_id,
       livesRemaining: row.lives_remaining,
       maxRounds: row.max_rounds,
       currentStreak: row.current_streak,
@@ -505,17 +509,13 @@ function facts(row: LockedRow, runId: string): { run: RunFacts; round: RoundFact
   };
 }
 
-type RunMode = "DAILY" | "PRACTICE" | "ENDLESS";
+type RunMode = "DAILY" | "PRACTICE" | "ENDLESS" | "MULTIPLAYER";
 
 /// Whether running out of lives ends the run.
 ///
-/// Only DAILY, where a bounded attempt IS the format. PRACTICE and ENDLESS are
-/// open-ended, and completing one of those runs is not a small thing: the
-/// streak, the score and the played-songs list are all columns on Run, so the
-/// client has no choice but to start a fresh run and draw zeroes. Three misses
-/// used to wipe a practice session that way — which reads as the app resetting
-/// itself, not as a game over. Lives are still tracked and still shown; they
-/// just don't terminate an open-ended run.
+/// Only DAILY, where a bounded attempt IS the format. PRACTICE, ENDLESS, and
+/// MULTIPLAYER are open-ended (or bounded by room rounds), so a life loss never
+/// terminates early; the socket handler controls the overall room lifecycle.
 function livesEndTheRun(mode: RunMode): boolean {
   return mode === "DAILY";
 }
@@ -726,7 +726,6 @@ async function resolveAndAdvance(
     artist: string | null;
     album: string | null;
     release_year: number | null;
-    used_puzzle_ids: string[] | null;
   };
 
   // Give-up inserts one row per remaining slot; an ordinary attempt inserts one.
@@ -798,14 +797,7 @@ async function resolveAndAdvance(
       s.title         AS title,
       s.artist        AS artist,
       s.album         AS album,
-      s."releaseYear" AS release_year,
-      -- Read here rather than in its own round trip: selection needs it, and it
-      -- is the same snapshot either way.
-      (
-        SELECT array_agg(u."puzzleId")
-        FROM "RunRound" u
-        WHERE u."runId" = ${run.id}
-      ) AS used_puzzle_ids
+      s."releaseYear" AS release_year
     FROM (SELECT 1) d
     LEFT JOIN "Song" s ON s."puzzleId" = ${round.puzzleId}
   `;
@@ -867,18 +859,34 @@ async function resolveAndAdvance(
   }
 
   const nextIndex = round.roundIndex + 1;
-  const pick = await samplePuzzle(
-    {
-      gameId: run.gameId,
-      playerId: run.playerId,
-      roundIndex: nextIndex,
-      curve: run.curve,
-      maxAttempts: run.maxAttempts,
-      cooldownDays: run.curve.puzzleCooldownDays,
-      excludePuzzleIds: row.used_puzzle_ids ?? [],
-    },
-    tx,
-  );
+
+  // For MULTIPLAYER: use the room's pre-selected puzzle; for all other modes: sample randomly.
+  let pick: { puzzleId: string; popularity: number; targetPopularity: number } | null;
+
+  if (run.mode === "MULTIPLAYER" && run.multiplayerRoomId) {
+    const roomRound = await tx.multiplayerRound.findUnique({
+      where: { roomId_roundIndex: { roomId: run.multiplayerRoomId, roundIndex: nextIndex } },
+      select: { puzzleId: true },
+    });
+    pick = roomRound ? { puzzleId: roomRound.puzzleId, popularity: 0, targetPopularity: 0 } : null;
+  } else {
+    const used = await tx.runRound.findMany({
+      where: { runId: run.id },
+      select: { puzzleId: true },
+    });
+    pick = await samplePuzzle(
+      {
+        gameId: run.gameId,
+        playerId: run.playerId,
+        roundIndex: nextIndex,
+        curve: run.curve,
+        maxAttempts: run.maxAttempts,
+        cooldownDays: run.curve.puzzleCooldownDays,
+        excludePuzzleIds: used.map((r) => r.puzzleId),
+      },
+      tx,
+    );
+  }
 
   // Nothing left to play. Completing beats stranding the player mid-run with a
   // 500, and the score they earned still counts.

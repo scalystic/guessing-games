@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "tsx watch server.ts",
     "build": "prisma generate && next build",
-    "start": "next start",
+    "start": "tsx server.ts",
     "lint": "eslint",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -43,6 +43,8 @@
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
     "sharp": "^0.35.3",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
