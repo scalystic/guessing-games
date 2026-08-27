@@ -6,6 +6,8 @@ import {
   fetchRevealAudio,
   fetchRunState,
   fetchStageAudio,
+  giveUpRound,
+  inlineStageAudio,
   newIdempotencyKey,
   skipRound,
   startRun,
@@ -13,6 +15,7 @@ import {
   type AchievementEntry,
   type AttemptResult,
   type CatalogMatch,
+  type InlineAudio,
   type Reveal,
   type RoundHint,
   type RunStatus,
@@ -48,6 +51,11 @@ export type GuessRecord = {
   correct: boolean;
   skipped: boolean;
   at: number;
+  /// Submitted, verdict not back yet. The slot is claimed optimistically so the
+  /// board reacts on the keystroke rather than on the round trip, but the outcome
+  /// stays unknown until the server rules — rendering it as a miss and then
+  /// flipping it to correct would be a lie the player watches happen.
+  pending?: boolean;
 };
 
 export type RoundHistoryEntry = {
@@ -121,6 +129,10 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
   /// after its generation is stale gets discarded instead of playing the
   /// previous round's clip over the current one.
   const generationRef = useRef(0);
+  /// Stage 1 of the round the server opened when the last one resolved, handed
+  /// over with that attempt's response. `nextRound()` plays it without asking for
+  /// anything, which is why advancing a round is now instant.
+  const nextRoundAudioRef = useRef<InlineAudio | null>(null);
   /// Guards the mount effect against a second invocation.
   ///
   /// POST /api/runs is not idempotent — it creates a row. React's development
@@ -146,7 +158,28 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
   useEffect(() => releaseAudio, [releaseAudio]);
   useEffect(() => releaseRevealAudio, [releaseRevealAudio]);
 
+  /// Swap in audio the server already handed us.
+  ///
+  /// The fast path: an attempt response carries the bytes for the stage it just
+  /// unlocked, so there is nothing to fetch and nothing to wait for.
+  const playInlineAudio = useCallback(
+    (inline: InlineAudio, generation: number) => {
+      if (generation !== generationRef.current) return;
+
+      const audio = inlineStageAudio(inline);
+      releaseAudio();
+      objectUrlRef.current = audio.objectUrl;
+      setAudioUrl(audio.objectUrl);
+      setStage(audio.stage);
+      setAudioLoading(false);
+    },
+    [releaseAudio],
+  );
+
   /// Pull the audio the current round has earned and swap it in.
+  ///
+  /// The fallback path, for a resume and for the rare response that declined to
+  /// inline its audio.
   const loadAudio = useCallback(
     async (id: string, generation: number) => {
       const token = tokenRef.current;
@@ -231,6 +264,8 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
     releaseAudio();
     setAudioUrl(null);
     resetRoundView();
+    // Belongs to the run being replaced.
+    nextRoundAudioRef.current = null;
     // roundHistory is deliberately NOT cleared. Everything else here is a Run
     // column and has to go back to what the new run says, but the played-songs
     // list is a record of this visit — a run ending (catalog exhausted, or the
@@ -261,7 +296,10 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
       setLives(started.livesRemaining);
       setPhase("ready");
 
-      await loadAudio(started.runId, generation);
+      // Stage 1 came back with the run. Only fall back to a second request if
+      // the server declined to inline it.
+      if (started.nextAudio) playInlineAudio(started.nextAudio, generation);
+      else await loadAudio(started.runId, generation);
     } catch (cause) {
       if (generation !== generationRef.current) return;
       setPhase("error");
@@ -272,7 +310,7 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
         ),
       );
     }
-  }, [gameSlug, loadAudio, releaseAudio, resetRoundView]);
+  }, [gameSlug, loadAudio, playInlineAudio, releaseAudio, resetRoundView]);
 
   /// Rehydrate from a stored run, or start a new one if there isn't a usable
   /// one. Runs once on mount.
@@ -356,7 +394,10 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
         );
 
         setPhase("ready");
-        await loadAudio(state.runId, generation);
+
+        // The resume payload carries the current round's audio too.
+        if (state.nextAudio) playInlineAudio(state.nextAudio, generation);
+        else await loadAudio(state.runId, generation);
       } catch (cause) {
         if (generation !== generationRef.current) return;
         // A 404 is the common case: the run expired, or the database was reset
@@ -381,7 +422,16 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
   /// Fold an attempt response into local state.
   const applyResult = useCallback(
     (result: AttemptResult, record: GuessRecord) => {
-      setGuesses((previous) => [...previous, record]);
+      // Settle the optimistic slot rather than appending beside it. Falls back to
+      // appending for any path that didn't claim one first.
+      setGuesses((previous) => {
+        const optimistic = previous.findIndex((entry) => entry.pending);
+        if (optimistic === -1) return [...previous, record];
+
+        const next = [...previous];
+        next[optimistic] = record;
+        return next;
+      });
       setAttemptsUsed(result.attemptsUsed);
       setStage(result.stageReached);
       setLives(result.livesRemaining);
@@ -403,6 +453,12 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
 
       // Round resolved. The server has already opened the next one (or finished
       // the run); the result panel is what the player sees until they advance.
+      //
+      // Its stage 1 came back in this very response, so hold on to it for
+      // nextRound() instead of throwing it away and re-fetching later.
+      nextRoundAudioRef.current =
+        result.runStatus === "IN_PROGRESS" ? result.nextAudio : null;
+
       setStatus(result.outcome);
       setReveal(result.reveal);
       setLastPoints(result.points);
@@ -425,6 +481,58 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
     [],
   );
 
+  /// Claim the attempt slot before the request goes out, and hand back the undo.
+  ///
+  /// This is the whole perceived-latency fix on the client: the board used to sit
+  /// completely still from the keystroke until the response landed, which read as
+  /// the app having missed the input. Everything claimed here is something the
+  /// server is about to confirm anyway — the slot is spent either way — so the
+  /// only thing withheld is the verdict.
+  const claimAttempt = useCallback(
+    (record: Omit<GuessRecord, "pending">) => {
+      const spent = attemptsUsed;
+      setGuesses((previous) => [...previous, { ...record, pending: true }]);
+      setAttemptsUsed(spent + 1);
+
+      return () => {
+        setGuesses((previous) => previous.filter((entry) => !entry.pending));
+        setAttemptsUsed(spent);
+      };
+    },
+    [attemptsUsed],
+  );
+
+  /// Shared tail for every attempt: settle state, then get audio in front of the
+  /// player without another request where possible.
+  const settleAttempt = useCallback(
+    async (
+      id: string,
+      generation: number,
+      result: AttemptResult,
+      record: Omit<GuessRecord, "pending">,
+    ) => {
+      applyResult(result, {
+        ...record,
+        correct: result.outcome === "SOLVED",
+        pending: false,
+      });
+
+      if (result.outcome === "PENDING") {
+        // The bytes for the stage this attempt just unlocked arrived with the
+        // response; only fall back to a fetch if the server declined to inline.
+        if (result.nextAudio) playInlineAudio(result.nextAudio, generation);
+        else await loadAudio(id, generation);
+        return;
+      }
+
+      // Best-effort and deliberately not awaited by the caller's critical path:
+      // the result panel is already on screen with the answer, and the full clip
+      // is a play button on a round that is over.
+      await loadRevealAudio(id, generation);
+    },
+    [applyResult, playInlineAudio, loadAudio, loadRevealAudio],
+  );
+
   const guess = useCallback(
     async (match: CatalogMatch) => {
       const id = runId;
@@ -432,6 +540,15 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
       if (!id || !token || pendingAction || status !== "PENDING") return;
 
       const generation = generationRef.current;
+      const record = {
+        song: { title: match.title, artist: match.artist },
+        puzzleId: match.puzzleId,
+        correct: false,
+        skipped: false,
+        at: Date.now(),
+      };
+
+      const undo = claimAttempt(record);
       setPendingAction("guess");
       try {
         const result = await submitGuess(id, token, {
@@ -441,24 +558,16 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
         });
         if (generation !== generationRef.current) return;
 
-        applyResult(result, {
-          song: { title: match.title, artist: match.artist },
-          puzzleId: match.puzzleId,
-          correct: result.outcome === "SOLVED",
-          skipped: false,
-          at: Date.now(),
-        });
-
-        if (result.outcome === "PENDING") await loadAudio(id, generation);
-        else await loadRevealAudio(id, generation);
+        await settleAttempt(id, generation, result, record);
       } catch (cause) {
         if (generation !== generationRef.current) return;
+        undo();
         setError(messageFor(cause, "That guess didn't go through."));
       } finally {
         setPendingAction(null);
       }
     },
-    [runId, pendingAction, status, applyResult, loadAudio, loadRevealAudio],
+    [runId, pendingAction, status, claimAttempt, settleAttempt],
   );
 
   const skip = useCallback(async () => {
@@ -467,9 +576,42 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
     if (!id || !token || pendingAction || status !== "PENDING") return;
 
     const generation = generationRef.current;
+    const record = {
+      song: null,
+      puzzleId: null,
+      correct: false,
+      skipped: true,
+      at: Date.now(),
+    };
+
+    const undo = claimAttempt(record);
     setPendingAction("skip");
     try {
       const result = await skipRound(id, token, newIdempotencyKey());
+      if (generation !== generationRef.current) return;
+
+      await settleAttempt(id, generation, result, record);
+    } catch (cause) {
+      if (generation !== generationRef.current) return;
+      undo();
+      setError(messageFor(cause, "That skip didn't go through."));
+    } finally {
+      setPendingAction(null);
+    }
+  }, [runId, pendingAction, status, claimAttempt, settleAttempt]);
+
+  /// One request. This used to loop /skip until the round resolved — six
+  /// sequential requests over six sequential transactions, for an outcome the
+  /// server produces in a single pass.
+  const giveUp = useCallback(async () => {
+    const id = runId;
+    const token = tokenRef.current;
+    if (!id || !token || pendingAction || status !== "PENDING") return;
+
+    const generation = generationRef.current;
+    setPendingAction("giveup");
+    try {
+      const result = await giveUpRound(id, token, newIdempotencyKey());
       if (generation !== generationRef.current) return;
 
       applyResult(result, {
@@ -480,52 +622,33 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
         at: Date.now(),
       });
 
-      if (result.outcome === "PENDING") await loadAudio(id, generation);
-      else await loadRevealAudio(id, generation);
-    } catch (cause) {
-      if (generation !== generationRef.current) return;
-      setError(messageFor(cause, "That skip didn't go through."));
-    } finally {
-      setPendingAction(null);
-    }
-  }, [runId, pendingAction, status, applyResult, loadAudio, loadRevealAudio]);
+      // A give-up spends every slot the round had left, not just one. Pad the
+      // timeline out to the server's count, or the board shows "4 left" on a
+      // round that is over — which the looping version did too, since it applied
+      // only the final skip's result.
+      setGuesses((previous) => {
+        if (previous.length >= result.attemptsUsed) return previous;
+        const at = Date.now();
+        return [
+          ...previous,
+          ...Array.from({ length: result.attemptsUsed - previous.length }, () => ({
+            song: null,
+            puzzleId: null,
+            correct: false,
+            skipped: true,
+            at,
+          })),
+        ];
+      });
 
-  const giveUp = useCallback(async () => {
-    const id = runId;
-    const token = tokenRef.current;
-    if (!id || !token || pendingAction || status !== "PENDING") return;
-
-    const generation = generationRef.current;
-    setPendingAction("giveup");
-    try {
-      let currentAttemptsUsed = attemptsUsed;
-      let outcome: RoundStatus = "PENDING";
-      let lastResult: AttemptResult | null = null;
-
-      while (outcome === "PENDING" && currentAttemptsUsed < maxAttempts) {
-        const result = await skipRound(id, token, newIdempotencyKey());
-        lastResult = result;
-        outcome = result.outcome as RoundStatus;
-        currentAttemptsUsed = result.attemptsUsed;
-      }
-
-      if (lastResult) {
-        applyResult(lastResult, {
-          song: null,
-          puzzleId: null,
-          correct: false,
-          skipped: true,
-          at: Date.now(),
-        });
-        await loadRevealAudio(id, generation);
-      }
+      await loadRevealAudio(id, generation);
     } catch (cause) {
       if (generation !== generationRef.current) return;
       setError(messageFor(cause, "Giving up failed."));
     } finally {
       if (generation === generationRef.current) setPendingAction(null);
     }
-  }, [runId, pendingAction, status, attemptsUsed, maxAttempts, applyResult, loadRevealAudio]);
+  }, [runId, pendingAction, status, applyResult, loadRevealAudio]);
 
   /// Move to the round the server already opened when this one resolved. If the
   /// run itself finished, this starts a new one.
@@ -543,8 +666,14 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
     setRoundIndex((index) => index + 1);
     releaseAudio();
     setAudioUrl(null);
-    await loadAudio(id, generation);
-  }, [runStatus, runId, begin, resetRoundView, releaseAudio, loadAudio]);
+
+    // Stage 1 of this round was delivered with the attempt that resolved the
+    // last one, so advancing costs no request at all.
+    const inline = nextRoundAudioRef.current;
+    nextRoundAudioRef.current = null;
+    if (inline) playInlineAudio(inline, generation);
+    else await loadAudio(id, generation);
+  }, [runStatus, runId, begin, resetRoundView, releaseAudio, loadAudio, playInlineAudio]);
 
   const restartRun = useCallback(() => {
     void begin();

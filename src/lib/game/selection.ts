@@ -41,9 +41,25 @@ export type SampledPuzzle = {
   puzzleId: string;
   popularity: number;
   targetPopularity: number;
+  /// The clip backing this puzzle. Returned because the query already joins
+  /// PuzzleAsset to decide playability, so the caller can inline stage-1 audio
+  /// without a second read.
+  asset: {
+    storageKey: string;
+    stageByteOffsets: number[];
+    byteSize: number | null;
+    ladderRevision: number;
+  };
 };
 
-type Row = { id: string; popularity: number };
+type Row = {
+  id: string;
+  popularity: number;
+  storageKey: string;
+  stageByteOffsets: number[];
+  byteSize: number | null;
+  ladderRevision: number;
+};
 
 /// Pick one playable puzzle near the round's target popularity.
 ///
@@ -51,7 +67,16 @@ type Row = { id: string; popularity: number };
 /// stageByteOffsets don't cover every stage, would hand the player a round that
 /// 404s partway up the ladder. Those are filtered in SQL rather than discovered
 /// at serve time.
-export async function samplePuzzle(args: SampleArgs): Promise<SampledPuzzle | null> {
+/// Anything that can run a tagged-template raw query — `prisma` or a transaction
+/// client. Callers inside a transaction MUST pass their `tx`: a transaction holds
+/// one connection, and reaching for the global client here would run the pick on
+/// a second connection, outside the row lock the caller is relying on.
+type RawExecutor = Pick<typeof prisma, "$queryRaw">;
+
+export async function samplePuzzle(
+  args: SampleArgs,
+  db: RawExecutor = prisma,
+): Promise<SampledPuzzle | null> {
   const target = targetPopularity(args.curve, args.roundIndex);
   const cooldownCutoff = new Date(Date.now() - args.cooldownDays * 24 * 60 * 60 * 1000);
 
@@ -64,8 +89,14 @@ export async function samplePuzzle(args: SampleArgs): Promise<SampledPuzzle | nu
     const low = Number.isFinite(window) ? Math.max(0, Math.floor(target - window)) : 0;
     const high = Number.isFinite(window) ? Math.min(100, Math.ceil(target + window)) : 100;
 
-    const rows = await prisma.$queryRaw<Row[]>`
-      SELECT p.id, p.popularity
+    const rows = await db.$queryRaw<Row[]>`
+      SELECT
+        p.id,
+        p.popularity,
+        a."storageKey"       AS "storageKey",
+        a."stageByteOffsets" AS "stageByteOffsets",
+        a."byteSize"         AS "byteSize",
+        a."ladderRevision"   AS "ladderRevision"
       FROM "Puzzle" p
       JOIN "PuzzleAsset" a
         ON a."puzzleId" = p.id
@@ -103,6 +134,12 @@ export async function samplePuzzle(args: SampleArgs): Promise<SampledPuzzle | nu
         puzzleId: row.id,
         popularity: row.popularity,
         targetPopularity: Math.round(target),
+        asset: {
+          storageKey: row.storageKey,
+          stageByteOffsets: row.stageByteOffsets,
+          byteSize: row.byteSize,
+          ladderRevision: row.ladderRevision,
+        },
       };
     }
   }

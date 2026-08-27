@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { jsonError, internalErrorJson } from "@/lib/api/response";
 import { readRunToken, runTokenMatches } from "@/lib/game/run-token";
-import { readPrefix } from "@/lib/storage";
+import { readClipPrefix } from "@/lib/storage";
 
 /// Serves the audio the current round has actually earned.
 ///
@@ -44,71 +44,96 @@ export async function GET(
       return jsonError(401, "missing_run_token", "Authorization: Bearer <run token> required.");
     }
 
-    const run = await prisma.run.findUnique({
-      where: { id: runId },
-      select: {
-        tokenHash: true,
-        status: true,
-        currentRoundIndex: true,
-        game: { select: { ladderRevision: true } },
-      },
-    });
+    // One statement for the run, its game's ladder revision, the relevant round
+    // and that round's asset. This used to be two sequential queries, and on a
+    // remote database each one is a full round trip — the reveal fetch runs on
+    // every resolved round, so that was ~100ms of pure waiting per round for a
+    // join the database can do itself.
+    //
+    // The LATERAL picks the round both callers need: the newest resolved round
+    // for `?reveal=1`, the current round otherwise. `ORDER BY roundIndex DESC`
+    // is what makes the reveal branch "latest resolved" — see the note above on
+    // why the current round is the wrong one to reveal.
+    type Row = {
+      token_hash: string;
+      status: string;
+      game_ladder_revision: number;
+      stage_reached: number | null;
+      storage_key: string | null;
+      stage_byte_offsets: number[] | null;
+      byte_size: number | null;
+      asset_ladder_revision: number | null;
+    };
+
+    const rows = await prisma.$queryRaw<Row[]>`
+      SELECT
+        r."tokenHash"        AS token_hash,
+        r.status::text       AS status,
+        g."ladderRevision"   AS game_ladder_revision,
+        rr."stageReached"    AS stage_reached,
+        a."storageKey"       AS storage_key,
+        a."stageByteOffsets" AS stage_byte_offsets,
+        a."byteSize"         AS byte_size,
+        a."ladderRevision"   AS asset_ladder_revision
+      FROM "Run" r
+      JOIN "Game" g
+        ON g.id = r."gameId"
+      LEFT JOIN LATERAL (
+        SELECT x."stageReached", x."puzzleId"
+        FROM "RunRound" x
+        WHERE x."runId" = r.id
+          AND CASE
+                WHEN ${reveal} THEN x.outcome <> 'PENDING'
+                ELSE x."roundIndex" = r."currentRoundIndex"
+              END
+        ORDER BY x."roundIndex" DESC
+        LIMIT 1
+      ) rr ON true
+      LEFT JOIN "PuzzleAsset" a
+        ON a."puzzleId" = rr."puzzleId" AND a.kind = 'AUDIO_CLIP'::"AssetKind"
+      WHERE r.id = ${runId}
+    `;
+
+    const row = rows[0];
 
     // Same response for "no such run" and "wrong token": distinguishing them
     // tells an attacker which run ids are real.
-    if (!run || !runTokenMatches(token, run.tokenHash)) {
+    if (!row || !runTokenMatches(token, row.token_hash)) {
       return jsonError(404, "not_found", "No such run.");
     }
 
     // A completed run still has an answer to play back, so the reveal path
     // outlives the run itself. The in-play path does not.
-    if (!reveal && run.status !== "IN_PROGRESS") {
-      return jsonError(409, "run_not_in_progress", `Run is ${run.status}.`);
+    if (!reveal && row.status !== "IN_PROGRESS") {
+      return jsonError(409, "run_not_in_progress", `Run is ${row.status}.`);
     }
 
-    const roundSelect = {
-      roundIndex: true,
-      outcome: true,
-      stageReached: true,
-      puzzle: {
-        select: {
-          assets: {
-            where: { kind: "AUDIO_CLIP" as const },
-            select: {
-              storageKey: true,
-              stageByteOffsets: true,
-              ladderRevision: true,
-              byteSize: true,
-            },
-          },
-        },
-      },
-    };
-
-    const round = reveal
-      ? await prisma.runRound.findFirst({
-          where: { runId, outcome: { not: "PENDING" } },
-          orderBy: { roundIndex: "desc" },
-          select: roundSelect,
-        })
-      : await prisma.runRound.findUnique({
-          where: { runId_roundIndex: { runId, roundIndex: run.currentRoundIndex } },
-          select: roundSelect,
-        });
-
-    if (!round) {
+    if (row.stage_reached === null) {
       return reveal
         ? jsonError(409, "no_resolved_round", "This run has no resolved round to reveal.")
         : jsonError(409, "no_current_round", "This run has no round in progress.");
     }
 
-    const asset = round.puzzle.assets[0];
+    const round = { stageReached: row.stage_reached };
+    const run = { game: { ladderRevision: row.game_ladder_revision } };
+    const asset =
+      row.storage_key !== null &&
+      row.stage_byte_offsets !== null &&
+      row.asset_ladder_revision !== null
+        ? {
+            storageKey: row.storage_key,
+            stageByteOffsets: row.stage_byte_offsets,
+            byteSize: row.byte_size,
+            ladderRevision: row.asset_ladder_revision,
+          }
+        : null;
+
     if (!asset) {
       // Selection filters these out, so reaching here means the asset was
       // deleted mid-run rather than a bad pick.
       return internalErrorJson(
         "runs.audio",
-        new Error(`round ${run.currentRoundIndex} of run ${runId} has no AUDIO_CLIP`),
+        new Error(`the served round of run ${runId} has no AUDIO_CLIP`),
       );
     }
 
@@ -139,7 +164,9 @@ export async function GET(
     }
     const endExclusive = reveal ? (asset.byteSize ?? stageEnd) : stageEnd;
 
-    const bytes = await readPrefix(asset.storageKey, endExclusive);
+    // Cached per process: a six-attempt round walks six growing prefixes of ONE
+    // object, and each of those used to be its own range request to R2.
+    const bytes = await readClipPrefix(asset.storageKey, endExclusive, asset.byteSize);
 
     return new Response(bytes as unknown as BodyInit, {
       headers: {

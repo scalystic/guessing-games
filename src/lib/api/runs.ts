@@ -14,6 +14,19 @@ export type RunMode = "DAILY" | "PRACTICE" | "ENDLESS";
 export type RoundOutcome = "PENDING" | "SOLVED" | "FAILED";
 export type RunStatus = "IN_PROGRESS" | "COMPLETED" | "ABANDONED" | "EXPIRED";
 
+/// Audio delivered inside a JSON response instead of behind another request.
+///
+/// The server sends the bytes it has just made the player entitled to, so the
+/// client does not have to turn around and ask for them. Every response carrying
+/// one of these also carries the URL that would have served it, so a null here
+/// is a fallback and not a failure.
+export type InlineAudio = {
+  /// base64. A stage slice is a few KB to ~40 KB.
+  bytes: string;
+  stage: number;
+  byteSize: number;
+};
+
 export type StartedRun = {
   runId: string;
   /// Returned exactly once, at start. Never re-fetchable.
@@ -24,6 +37,8 @@ export type StartedRun = {
   attemptsRemaining: number;
   livesRemaining: number;
   audioUrl: string;
+  /// Stage 1, so starting a run is one request rather than two.
+  nextAudio: InlineAudio | null;
 };
 
 export type RoundHint = {
@@ -54,6 +69,10 @@ export type AttemptResult = {
   attemptsUsed: number;
   attemptsRemaining: number;
   nextAudioUrl: string | null;
+  /// The bytes `nextAudioUrl` would return, sent along to save a round trip.
+  /// Null when there is no next stage, or when the server declined to inline it —
+  /// in which case the client falls back to fetching `nextAudioUrl`.
+  nextAudio: InlineAudio | null;
   livesRemaining: number;
   runStatus: RunStatus;
   roundIndex: number;
@@ -89,6 +108,8 @@ export type RunState = {
   roundsFailed: number;
   expiresAt: string | null;
   audioUrl: string | null;
+  /// The current round's earned audio, so a resume is one request.
+  nextAudio: InlineAudio | null;
   current: {
     roundIndex: number;
     stageReached: number;
@@ -169,6 +190,23 @@ export function skipRound(
   );
 }
 
+/// Give up on the current round in ONE request.
+///
+/// Replaces a client-side loop that called `skipRound` until the round resolved:
+/// up to six sequential requests, six transactions, and six times the latency for
+/// an outcome the server can produce in a single pass.
+export function giveUpRound(
+  runId: string,
+  runToken: string,
+  idempotencyKey: string,
+): Promise<AttemptResult> {
+  return apiPost<AttemptResult>(
+    `/api/runs/${encodeURIComponent(runId)}/giveup`,
+    { idempotencyKey },
+    { headers: bearer(runToken) },
+  );
+}
+
 export function searchCatalog(
   gameSlug: string,
   query: string,
@@ -217,6 +255,26 @@ export async function fetchStageAudio(runId: string, runToken: string): Promise<
 /// no longer privileged information.
 export async function fetchRevealAudio(runId: string, runToken: string): Promise<StageAudio> {
   return fetchAudio(runId, runToken, true);
+}
+
+/// Wrap bytes that arrived inside a JSON response in an object URL, so callers
+/// can't tell them apart from bytes that came from `fetchStageAudio`.
+///
+/// Decoded by hand rather than via `fetch("data:...")`, which would be a second
+/// async hop for data already sitting in memory.
+export function inlineStageAudio(inline: InlineAudio): StageAudio {
+  const binary = atob(inline.bytes);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  const blob = new Blob([bytes], { type: "audio/mpeg" });
+  return {
+    objectUrl: URL.createObjectURL(blob),
+    stage: inline.stage,
+    byteSize: blob.size,
+  };
 }
 
 async function fetchAudio(

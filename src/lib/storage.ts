@@ -151,6 +151,98 @@ export async function readPrefix(key: string, endExclusive: number): Promise<Uin
   return bytes;
 }
 
+// ---------------------------------------------------------------------------
+// Clip cache
+// ---------------------------------------------------------------------------
+
+/// Stage audio is fetched repeatedly for the SAME object: a six-attempt round
+/// asks for six growing prefixes of one clip, and each of those used to be its
+/// own round trip to R2 on the serving path. A stored clip is at most 30s at
+/// 128kbps mono, so it is cheaper to pull the object once and slice it locally.
+///
+/// Deliberately a plain insertion-ordered Map rather than a true LRU: entries
+/// are ~480 KB, the cap is small, and re-fetching an evicted clip costs one
+/// range request. Tracking real recency would not measurably change the hit
+/// rate for a workload that walks one clip at a time.
+///
+/// Per-process, so it warms independently on each serverless instance and needs
+/// no invalidation: a re-cut clip is a new ingest, and ingest writes a new
+/// storageKey rather than overwriting one.
+const CLIP_CACHE_MAX = 48;
+const clipCache = new Map<string, Uint8Array>();
+
+function remember(key: string, bytes: Uint8Array): void {
+  // Delete-then-set moves an existing key to the newest position, so a clip in
+  // active use isn't evicted halfway up its own ladder.
+  clipCache.delete(key);
+  clipCache.set(key, bytes);
+
+  while (clipCache.size > CLIP_CACHE_MAX) {
+    const oldest = clipCache.keys().next().value;
+    if (oldest === undefined) break;
+    clipCache.delete(oldest);
+  }
+}
+
+/// Full-object fetches already running, so N concurrent stage requests for one
+/// clip trigger one warm rather than N.
+const warming = new Map<string, Promise<void>>();
+
+/// Pull the whole object into the cache in the background.
+///
+/// Deliberately NOT awaited by the request that triggers it. Stage 1 needs ~6 KB
+/// of a ~480 KB object; blocking on the full download to populate the cache would
+/// make the first attempt of every round SLOWER in exchange for speeding up
+/// attempts the player may never make. This way the range read answers now and
+/// the rest arrives while they are listening.
+function warmClip(key: string, fullSize: number): void {
+  if (clipCache.has(key) || warming.has(key)) return;
+
+  const task = readPrefix(key, fullSize)
+    .then((whole) => {
+      remember(key, whole);
+    })
+    .catch(() => {
+      // A failed warm is not an error anyone is waiting on; the next request
+      // falls back to a range read exactly as it would have anyway.
+    })
+    .finally(() => {
+      warming.delete(key);
+    });
+
+  warming.set(key, task);
+}
+
+/// Fetch `[0, endExclusive)` of a clip, serving from the in-process cache once
+/// the object has been pulled.
+///
+/// `fullSize` is `PuzzleAsset.byteSize` — the length of the whole stored object.
+/// When it is known we kick off a background warm so later stages of the same
+/// round are served from memory. When it is null (rows predating that column) we
+/// only ever range-read and cache NOTHING: a partial object stored under the
+/// clip's key would look like a complete one to a later, longer read and would
+/// silently serve short audio.
+export async function readClipPrefix(
+  key: string,
+  endExclusive: number,
+  fullSize: number | null,
+): Promise<Uint8Array> {
+  const cached = clipCache.get(key);
+  if (cached && cached.length >= endExclusive) {
+    remember(key, cached);
+    return cached.subarray(0, endExclusive);
+  }
+
+  if (fullSize !== null && endExclusive < fullSize) warmClip(key, fullSize);
+
+  // Exactly the bytes asked for, which is also the smallest thing R2 can send.
+  const bytes = await readPrefix(key, endExclusive);
+  // A read of the whole object is itself a complete cache entry.
+  if (fullSize !== null && endExclusive === fullSize) remember(key, bytes);
+
+  return bytes;
+}
+
 /// Fetch the whole object. Used by the reslice path: recomputing
 /// stageByteOffsets for a new ladder needs every frame of the stored clip.
 export async function readObject(key: string): Promise<Buffer> {
