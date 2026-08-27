@@ -38,7 +38,15 @@ export function useMultiplayerRoom(code: string | null, playerId: string | null)
   useEffect(() => {
     if (!playerId || !code) return
 
-    const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io({
+    // Multiplayer's realtime layer runs as its own deployment (Railway),
+    // separate from this app (Vercel) — see sargam-realtime-server. Same-origin
+    // wouldn't reach it; the socket has to name that server explicitly. Falls
+    // back to same-origin for local dev only when the env var is unset, which
+    // matters if you're running the realtime server's code inline for some
+    // reason — normally you'd run it as its own local process and still set
+    // this to its URL (see that repo's README).
+    const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || undefined
+    const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(socketUrl, {
       path: '/ws/socket.io',
     })
 

@@ -2,10 +2,13 @@
   "name": "guessing-games",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "dev": "tsx watch server.ts",
+    "dev": "next dev",
     "build": "prisma generate && next build",
-    "start": "tsx server.ts",
+    "start": "next start",
     "lint": "eslint",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -43,7 +46,6 @@
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
     "sharp": "^0.35.3",
-    "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "zod": "^4.4.3"
   },
