@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api/client";
 import {
   fetchRevealAudio,
-  fetchRunState,
   fetchStageAudio,
   giveUpRound,
   inlineStageAudio,
@@ -16,13 +15,16 @@ import {
   type AttemptResult,
   type CatalogMatch,
   type InlineAudio,
+  type DecadeFilter,
   type Reveal,
   type RoundHint,
   type RunStatus,
 } from "@/lib/api/runs";
 
+export type { DecadeFilter };
+
 export type { AchievementEntry };
-import { clearStoredRun, loadStoredRun, saveStoredRun } from "@/lib/run-storage";
+import { saveStoredRun } from "@/lib/run-storage";
 
 /// The run loop, driven entirely by the server.
 ///
@@ -71,9 +73,11 @@ export type GameConfig = {
   maxAttempts: number;
 };
 
-/// `starting` covers both a fresh run and a resume — the board can't be drawn
-/// either way. `error` is terminal until the player retries.
-export type GamePhase = "starting" | "ready" | "error";
+/// `selecting` is the pre-game era picker — shown whenever there's no run to
+/// resume, before any request has gone out. `starting` covers both a fresh
+/// run (after a pick) and a resume — the board can't be drawn either way.
+/// `error` is terminal until the player retries.
+export type GamePhase = "selecting" | "starting" | "ready" | "error";
 export type PendingAction = "guess" | "skip" | "giveup" | null;
 
 export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConfig) {
@@ -82,6 +86,10 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
 
   const [runId, setRunId] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<RunStatus>("IN_PROGRESS");
+  /// Era category the active (or about to start) run samples from. Kept in
+  /// sync with the server's Run.decadeFilter rather than trusted locally,
+  /// since a resumed run's filter is decided server-side.
+  const [era, setEraState] = useState<DecadeFilter | null>(null);
 
   // Current round.
   const [roundIndex, setRoundIndex] = useState(1);
@@ -256,8 +264,14 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
   }, [releaseRevealAudio]);
 
   /// Start a brand-new run, replacing anything stored.
-  const begin = useCallback(async () => {
+  ///
+  /// `eraOverride` distinguishes "no explicit choice, keep whatever `era`
+  /// already is" (undefined — the mount/resume/retry paths) from "the player
+  /// picked a new one" (a `DecadeFilter | null` value, including `null` for
+  /// "All").
+  const begin = useCallback(async (eraOverride?: DecadeFilter | null) => {
     const generation = ++generationRef.current;
+    const nextEra = eraOverride !== undefined ? eraOverride : era;
 
     setPhase("starting");
     setError(null);
@@ -279,7 +293,7 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
     setBestStreak(0);
 
     try {
-      const started = await startRun(gameSlug, "PRACTICE");
+      const started = await startRun(gameSlug, "PRACTICE", nextEra);
       if (generation !== generationRef.current) return;
 
       tokenRef.current = started.runToken;
@@ -291,6 +305,7 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
 
       setRunId(started.runId);
       setRunStatus("IN_PROGRESS");
+      setEraState(started.decadeFilter);
       setRoundIndex(started.roundIndex);
       setStage(started.stageReached);
       setLives(started.livesRemaining);
@@ -310,114 +325,17 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
         ),
       );
     }
-  }, [gameSlug, loadAudio, playInlineAudio, releaseAudio, resetRoundView]);
+  }, [gameSlug, era, loadAudio, playInlineAudio, releaseAudio, resetRoundView]);
 
-  /// Rehydrate from a stored run, or start a new one if there isn't a usable
-  /// one. Runs once on mount.
+  /// Always land on the era picker first. A saved run from a previous visit
+  /// is intentionally NOT auto-resumed here — the picker is the one gate every
+  /// session goes through, so it can't be silently skipped by a leftover
+  /// localStorage entry. Runs once on mount.
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
-
-    // No `cancelled` flag here, deliberately. Pairing one with the guard above
-    // is a trap: StrictMode mounts, runs the cleanup (setting cancelled), then
-    // remounts — and the remount hits the guard and returns, so the only
-    // invocation still in flight is one that has been told to discard its
-    // result. Nothing would ever hydrate. generationRef already discards work
-    // that a later begin()/nextRound() has superseded, which is the staleness
-    // that actually matters; a setState after a real unmount is a no-op.
-    async function resumeOrStart() {
-      const stored = loadStoredRun(gameSlug);
-      if (!stored) {
-        void begin();
-        return;
-      }
-
-      const generation = ++generationRef.current;
-      tokenRef.current = stored.runToken;
-
-      try {
-        const state = await fetchRunState(stored.runId, stored.runToken);
-        if (generation !== generationRef.current) return;
-
-        // A finished run is not resumable — nothing to guess at.
-        if (state.runStatus !== "IN_PROGRESS" || !state.current) {
-          clearStoredRun();
-          void begin();
-          return;
-        }
-
-        setRunId(state.runId);
-        setRunStatus(state.runStatus);
-        setRoundIndex(state.current.roundIndex);
-        setStage(state.current.stageReached);
-        setAttemptsUsed(state.current.attemptsUsed);
-        setGuesses(
-          state.current.attempts.map((attempt) => ({
-            song: attempt.song,
-            puzzleId: null,
-            correct: attempt.isCorrect,
-            skipped: attempt.isSkip,
-            // The real timestamps aren't in the payload and nothing renders
-            // them for the current round; only roundHistory shows relative time.
-            at: 0,
-          })),
-        );
-        setHint(state.current.hint);
-        setStatus("PENDING");
-        setReveal(null);
-        setLastPoints(null);
-
-        setLives(state.livesRemaining);
-        setScore(state.score);
-        setStreak(state.currentStreak);
-        setBestStreak(state.bestStreak);
-        setRoundsSolved(state.roundsSolved);
-        setRoundsPlayed(state.roundsSolved + state.roundsFailed);
-        setLevel(state.level ?? 1);
-        setXpProgress(state.xpProgress ?? 0);
-        setXpPerLevel(state.xpPerLevel ?? 500);
-        setRankName(state.rankName ?? "Novice Listener");
-        setAchievements(state.achievements ?? []);
-        setRoundHistory(
-          state.past
-            .filter((round) => round.song !== null)
-            .map((round) => ({
-              song: round.song!,
-              solved: round.outcome === "SOLVED",
-              attemptsUsed: round.attemptsUsed,
-              // Real resolution time from the server. Falling back to 0 here
-              // would render as "496474h ago" — the epoch, not "unknown".
-              at: round.resolvedAt ? Date.parse(round.resolvedAt) : Date.now(),
-            }))
-            // Newest first, matching the order live rounds are prepended in.
-            .reverse(),
-        );
-
-        setPhase("ready");
-
-        // The resume payload carries the current round's audio too.
-        if (state.nextAudio) playInlineAudio(state.nextAudio, generation);
-        else await loadAudio(state.runId, generation);
-      } catch (cause) {
-        if (generation !== generationRef.current) return;
-        // A 404 is the common case: the run expired, or the database was reset
-        // under a token we still had. Either way, start fresh rather than
-        // stranding the player on an error screen.
-        if (cause instanceof ApiError && cause.status === 404) {
-          clearStoredRun();
-          void begin();
-          return;
-        }
-        setPhase("error");
-        setError(messageFor(cause, "Couldn't resume your run."));
-      }
-    }
-
-    void resumeOrStart();
-    // Mount-only: begin/loadAudio are stable, and re-running this on any change
-    // would abandon a live run.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameSlug]);
+    setPhase("selecting");
+  }, []);
 
   /// Fold an attempt response into local state.
   const applyResult = useCallback(
@@ -679,6 +597,15 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
     void begin();
   }, [begin]);
 
+  /// Switch era category. There's no way to re-filter an in-progress run's
+  /// remaining rounds server-side, so this always starts a fresh one.
+  const setEra = useCallback(
+    (next: DecadeFilter | null) => {
+      void begin(next);
+    },
+    [begin],
+  );
+
   const revealMs = revealLadder[stage - 1] ?? revealLadder[0] ?? 0;
   const totalMs = revealLadder[revealLadder.length - 1] ?? 0;
 
@@ -689,6 +616,8 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
 
     runId,
     runStatus,
+    era,
+    setEra,
     roundIndex,
     stage,
     attemptsUsed,

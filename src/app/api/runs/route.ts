@@ -19,6 +19,8 @@ export const dynamic = "force-dynamic";
 const BodySchema = z.object({
   gameSlug: z.string().min(1),
   mode: z.enum(["DAILY", "PRACTICE", "ENDLESS"]).default("PRACTICE"),
+  /// Era category to sample from. Omitted/null = every era.
+  decadeFilter: z.enum(["NINETIES", "TWO_THOUSANDS"]).nullish(),
 });
 
 const RUN_TTL_MINUTES = Number.parseInt(process.env.RUN_TTL_MINUTES ?? "180", 10);
@@ -34,7 +36,7 @@ export async function POST(request: Request): Promise<Response> {
     if (!parsed.success) {
       return jsonError(400, "invalid_body", "Expected { gameSlug, mode? }.");
     }
-    const { gameSlug, mode } = parsed.data;
+    const { gameSlug, mode, decadeFilter } = parsed.data;
 
     if (mode !== "PRACTICE") {
       return jsonError(501, "mode_unavailable", `${mode} is not wired up yet.`);
@@ -67,6 +69,7 @@ export async function POST(request: Request): Promise<Response> {
       maxAttempts: game.maxAttempts,
       cooldownDays: game.puzzleCooldownDays,
       excludePuzzleIds: [],
+      decadeFilter,
     });
 
     // An empty catalog and an exhausted one are the same thing to the player.
@@ -92,7 +95,7 @@ export async function POST(request: Request): Promise<Response> {
     const rows = await prisma.$queryRaw<{ lives_remaining: number; current_round_index: number }[]>`
       WITH r AS (
         INSERT INTO "Run" (
-          id, "gameId", "playerId", mode, "dayKey", seed,
+          id, "gameId", "playerId", mode, "dayKey", seed, "decadeFilter",
           "livesRemaining", "maxRounds", "scoringVersion", "isRanked",
           "tokenHash", "expiresAt"
         )
@@ -101,7 +104,7 @@ export async function POST(request: Request): Promise<Response> {
           -- NULL dayKey is what makes practice unlimited: the
           -- @@unique([playerId, gameId, dayKey]) that caps DAILY at one per day
           -- doesn't constrain NULLs, since Postgres treats them as distinct.
-          NULL, ${randomBytes(16).toString("hex")},
+          NULL, ${randomBytes(16).toString("hex")}, ${decadeFilter ?? null}::"RunEra",
           ${game.livesPerRun}, NULL, ${game.scoringVersion}, false,
           ${tokenHash}, ${new Date(Date.now() + RUN_TTL_MINUTES * 60 * 1000)}
         )
@@ -146,6 +149,7 @@ export async function POST(request: Request): Promise<Response> {
       runId: run.id,
       runToken: token,
       mode,
+      decadeFilter: decadeFilter ?? null,
       roundIndex: run.currentRoundIndex,
       stageReached: 1,
       attemptsRemaining: game.maxAttempts,

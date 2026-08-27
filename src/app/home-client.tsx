@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { CurrentUser } from "@/lib/get-current-user";
 import type { GameDetail } from "@/lib/games";
-import { useMelodleGame } from "@/hooks/useMelodleGame";
+import { useMelodleGame, type DecadeFilter } from "@/hooks/useMelodleGame";
 import { useNow } from "@/hooks/useNow";
 import { PlayerBar } from "@/components/PlayerBar";
 import { AttemptTimeline } from "@/components/AttemptTimeline";
@@ -64,6 +64,187 @@ type HeaderActionProps = {
   onClick: () => void;
 };
 
+const ERA_OPTIONS: { value: DecadeFilter | null; label: string }[] = [
+  { value: null, label: "All" },
+  { value: "NINETIES", label: "90's" },
+  { value: "TWO_THOUSANDS", label: "20's" },
+];
+
+function EraFilterControl({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: DecadeFilter | null;
+  onChange: (next: DecadeFilter | null) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div
+      className="flex items-center gap-1 rounded-full border border-(--hairline) bg-(--surface) p-1"
+      role="group"
+      aria-label="Song era"
+    >
+      {ERA_OPTIONS.map((option) => (
+        <button
+          key={option.label}
+          type="button"
+          disabled={disabled}
+          onClick={() => onChange(option.value)}
+          aria-pressed={value === option.value}
+          className={`rounded-full px-3 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.14em] transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50 ${
+            value === option.value
+              ? "bg-(--signal) text-(--signal-ink)"
+              : "text-(--text-faint) hover:bg-(--surface-hover) hover:text-(--text)"
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const ERA_PICKER_OPTIONS: { value: DecadeFilter | null; label: string; hint: string; tilt: string }[] = [
+  { value: null, label: "All eras", hint: "Every song in the catalog", tilt: "sm:-rotate-2" },
+  { value: "NINETIES", label: "Old", hint: "1960 – 1999", tilt: "sm:rotate-1" },
+  { value: "TWO_THOUSANDS", label: "New", hint: "2000 – now", tilt: "sm:-rotate-1" },
+];
+
+/// One cassette shell, rendered small. Reuses the exact `.cassette-reel`
+/// mechanism from PlayerBar rather than a fresh illustration — when a tape is
+/// picked, its reels physically spin, same as a loaded deck.
+function TapeCard({
+  option,
+  selected,
+  dimmed,
+  onPick,
+}: {
+  option: (typeof ERA_PICKER_OPTIONS)[number];
+  selected: boolean;
+  dimmed?: boolean;
+  onPick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={onPick}
+      disabled={dimmed}
+      style={{ background: "#171b2b" }}
+      className={`group relative rounded-[14px] border p-4 text-center transition-all duration-200 disabled:cursor-not-allowed ${option.tilt} ${
+        selected
+          ? "-translate-y-1 rotate-0 border-2 border-(--signal) shadow-[0_18px_36px_-16px_rgba(217,157,47,0.6)]"
+          : dimmed
+            ? "border-[#2d3447] opacity-40"
+            : "border-[#2d3447] hover:-translate-y-0.5 hover:rotate-0 hover:border-[#465074]"
+      }`}
+    >
+      {/* Label window, echoing the cassette-shell stripe on the deck. */}
+      <div className="relative flex items-center justify-center gap-2.5 rounded-[7px] border border-[#3e4761]/70 bg-gradient-to-r from-[#d99d2f]/10 via-[#3a7ad5]/15 to-[#d99d2f]/10 py-2.5">
+        <span className="cassette-reel h-7 w-7 shrink-0 rounded-full" data-playing={selected} aria-hidden="true" />
+        <span className="font-mono text-[6px] uppercase tracking-[0.25em] text-[#5b647d]">Sargam · Tape</span>
+        <span className="cassette-reel h-7 w-7 shrink-0 rounded-full" data-playing={selected} aria-hidden="true" />
+      </div>
+
+      <span className="mt-3 block font-[family-name:var(--font-display)] text-xl font-semibold leading-none text-[#f2e9d8]">
+        {option.label}
+      </span>
+      <span className="mt-1.5 block font-mono text-[9px] uppercase tracking-[0.14em] text-[#8e93a3]">
+        {option.hint}
+      </span>
+    </button>
+  );
+}
+
+/// How long the picked tape sits in its selected state — reels spinning,
+/// border lit — before the dialog actually closes.
+const TAPE_LOAD_DELAY_MS = 1000;
+
+/// Opened by pressing the deck's own play button before any era is chosen —
+/// the game screen is already visible behind it. Picking a tape closes the
+/// dialog and starts the round with that filter immediately; there's no
+/// separate confirm step, since pressing play was already the confirm.
+function EraDialog({
+  onSelect,
+  onClose,
+}: {
+  onSelect: (era: DecadeFilter | null) => void;
+  onClose: () => void;
+}) {
+  const [pickedEra, setPickedEra] = useState<DecadeFilter | null | undefined>(undefined);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  function handlePick(era: DecadeFilter | null) {
+    if (pickedEra !== undefined) return; // already loading a tape — ignore further clicks
+    setPickedEra(era);
+    setTimeout(() => onSelect(era), TAPE_LOAD_DELAY_MS);
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-(--scrim) p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="era-dialog-title"
+    >
+      <div
+        onClick={(event) => event.stopPropagation()}
+        className="panel-in w-full max-w-xl rounded-[14px] border border-(--hairline) bg-(--surface-strong) p-6 shadow-2xl"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-(--signal)">
+              Load a tape
+            </p>
+            <h2
+              id="era-dialog-title"
+              className="mt-1 font-[family-name:var(--font-display)] text-2xl font-semibold leading-none text-(--text)"
+            >
+              Pick the decade you're playing.
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-(--hairline) text-(--text-dim) transition-colors duration-200 hover:bg-(--surface-hover) hover:text-(--text)"
+          >
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <path d="M4 4l12 12M16 4L4 16" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+
+        <div
+          className="mx-auto mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3 sm:gap-3"
+          role="radiogroup"
+          aria-label="Song era"
+        >
+          {ERA_PICKER_OPTIONS.map((option) => (
+            <TapeCard
+              key={option.label}
+              option={option}
+              selected={pickedEra === option.value}
+              dimmed={pickedEra !== undefined && pickedEra !== option.value}
+              onPick={() => handlePick(option.value)}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function HeaderAction({ label, icon, onClick }: HeaderActionProps) {
   return (
     <button
@@ -82,6 +263,7 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
   const [showHelp, setShowHelp] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showAuthGate, setShowAuthGate] = useState(false);
+  const [showEraDialog, setShowEraDialog] = useState(false);
   const game = useMelodleGame({
     gameSlug: config.slug,
     revealLadder: config.revealLadder,
@@ -113,21 +295,23 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
   }
 
   const prompt =
-    resolved
-      ? game.status === "SOLVED"
-        ? "Signal found."
-        : "Signal missed."
-      : game.phase === "starting" || game.audioLoading
-        ? game.roundIndex === 1
-          ? "Tuning your first signal…"
-          : "Tuning the next signal…"
-        : game.pendingAction === "guess"
-          ? "Checking that answer…"
-          : game.pendingAction === "skip"
-            ? `Unlocking ${nextRevealMs ? formatSeconds(nextRevealMs) : "more"} seconds…`
-            : game.pendingAction === "giveup"
-              ? "Revealing the mystery track…"
-              : `You have ${formatSeconds(game.revealMs)} seconds. Know it?`;
+    game.phase === "selecting"
+      ? "Press play to load a tape."
+      : resolved
+        ? game.status === "SOLVED"
+          ? "Signal found."
+          : "Signal missed."
+        : game.phase === "starting" || game.audioLoading
+          ? game.roundIndex === 1
+            ? "Tuning your first signal…"
+            : "Tuning the next signal…"
+          : game.pendingAction === "guess"
+            ? "Checking that answer…"
+            : game.pendingAction === "skip"
+              ? `Unlocking ${nextRevealMs ? formatSeconds(nextRevealMs) : "more"} seconds…`
+              : game.pendingAction === "giveup"
+                ? "Revealing the mystery track…"
+                : `You have ${formatSeconds(game.revealMs)} seconds. Know it?`;
 
   return (
     <div className="page-backdrop min-h-screen text-(--text)">
@@ -152,7 +336,7 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
           </nav>
         </header>
 
-        <section className="flex items-center justify-center border-b border-(--hairline) py-3.5" aria-label="Current session">
+        <section className="flex flex-wrap items-center justify-center gap-3 border-b border-(--hairline) py-3.5" aria-label="Current session">
           <div className="flex items-center gap-3 rounded-full border border-(--hairline) bg-(--surface) px-4 py-1.5">
             <span className="flex items-center gap-2">
               <span className="text-(--signal)">
@@ -170,6 +354,11 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
               <span className="text-sm font-bold text-(--text)">{game.bestStreak}</span>
             </span>
           </div>
+          <EraFilterControl
+            value={game.era}
+            onChange={(next) => game.setEra(next)}
+            disabled={game.pending || game.phase === "starting"}
+          />
         </section>
 
         {game.error ? (
@@ -208,6 +397,11 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
             ladder={game.revealLadder}
             loading={game.audioLoading || game.phase === "starting"}
             waveformSeed={`${game.runId ?? "run"}:${game.roundIndex}`}
+            onPlayRequested={game.phase === "selecting" ? () => setShowEraDialog(true) : undefined}
+            promptTitle={game.phase === "selecting" ? "Load a tape to begin" : undefined}
+            promptSubtitle={
+              game.phase === "selecting" ? "Pick an era and the round starts." : undefined
+            }
           />
 
           <div className="mt-5">
@@ -323,6 +517,16 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
             achievements={game.achievements}
           />
         </Modal>
+      ) : null}
+
+      {showEraDialog ? (
+        <EraDialog
+          onSelect={(era) => {
+            setShowEraDialog(false);
+            game.setEra(era);
+          }}
+          onClose={() => setShowEraDialog(false)}
+        />
       ) : null}
 
       {showAuthGate ? (

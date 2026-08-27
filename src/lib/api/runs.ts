@@ -13,6 +13,8 @@ import { ApiError, apiGet, apiPost } from "@/lib/api/client";
 export type RunMode = "DAILY" | "PRACTICE" | "ENDLESS";
 export type RoundOutcome = "PENDING" | "SOLVED" | "FAILED";
 export type RunStatus = "IN_PROGRESS" | "COMPLETED" | "ABANDONED" | "EXPIRED";
+/// Era category a run samples from. Null = every era.
+export type DecadeFilter = "NINETIES" | "TWO_THOUSANDS";
 
 /// Audio delivered inside a JSON response instead of behind another request.
 ///
@@ -32,6 +34,7 @@ export type StartedRun = {
   /// Returned exactly once, at start. Never re-fetchable.
   runToken: string;
   mode: RunMode;
+  decadeFilter: DecadeFilter | null;
   roundIndex: number;
   stageReached: number;
   attemptsRemaining: number;
@@ -96,6 +99,7 @@ export type RunState = {
   runId: string;
   gameSlug: string;
   mode: RunMode;
+  decadeFilter: DecadeFilter | null;
   runStatus: RunStatus;
   maxAttempts: number;
   revealLadder: number[];
@@ -157,8 +161,12 @@ function bearer(runToken: string): HeadersInit {
   return { authorization: `Bearer ${runToken}` };
 }
 
-export function startRun(gameSlug: string, mode: RunMode = "PRACTICE"): Promise<StartedRun> {
-  return apiPost<StartedRun>("/api/runs", { gameSlug, mode });
+export function startRun(
+  gameSlug: string,
+  mode: RunMode = "PRACTICE",
+  decadeFilter?: DecadeFilter | null,
+): Promise<StartedRun> {
+  return apiPost<StartedRun>("/api/runs", { gameSlug, mode, decadeFilter: decadeFilter ?? null });
 }
 
 export function fetchRunState(runId: string, runToken: string): Promise<RunState> {

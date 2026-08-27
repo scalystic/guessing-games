@@ -1,4 +1,5 @@
 import "server-only";
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 
 /// Puzzle selection. Difficulty ramps WITHIN a run: round 1 targets the top of
@@ -24,6 +25,8 @@ export function targetPopularity(curve: SelectionCurve, roundIndex: number): num
 /// ignores it entirely so a run can always continue.
 const WINDOW_MULTIPLIERS = [1, 2, 4, Number.POSITIVE_INFINITY];
 
+export type DecadeFilter = "NINETIES" | "TWO_THOUSANDS";
+
 export type SampleArgs = {
   gameId: string;
   playerId: string;
@@ -35,7 +38,19 @@ export type SampleArgs = {
   /// Puzzles already used in this run. @@unique([runId, puzzleId]) is the hard
   /// stop, but excluding them here avoids burning a retry on a guaranteed clash.
   excludePuzzleIds: string[];
+  /// Player-chosen era category. Null/undefined = every era.
+  decadeFilter?: DecadeFilter | null;
 };
+
+/// Song.decade stores the decade-start year (e.g. 1990), so "the 90s and
+/// earlier" and "2000 onward" are each a range of decade-start values, not a
+/// single one. TWO_THOUSANDS has no upper bound — the catalog never has
+/// decade values ahead of the current one.
+function decadeClause(filter: DecadeFilter | null | undefined) {
+  if (filter === "NINETIES") return Prisma.sql`AND s.decade BETWEEN 1960 AND 1990`;
+  if (filter === "TWO_THOUSANDS") return Prisma.sql`AND s.decade >= 2000`;
+  return Prisma.empty;
+}
 
 export type SampledPuzzle = {
   puzzleId: string;
@@ -101,12 +116,15 @@ export async function samplePuzzle(
       JOIN "PuzzleAsset" a
         ON a."puzzleId" = p.id
        AND a.kind = 'AUDIO_CLIP'::"AssetKind"
+      LEFT JOIN "Song" s
+        ON s."puzzleId" = p.id
       WHERE p."gameId" = ${args.gameId}
         AND p."isActive" = true
         AND p."isBlocked" = false
         AND p.popularity BETWEEN ${low} AND ${high}
         AND coalesce(array_length(a."stageByteOffsets", 1), 0) >= ${args.maxAttempts}
         AND p.id <> ALL(${args.excludePuzzleIds}::text[])
+        ${decadeClause(args.decadeFilter)}
         AND NOT EXISTS (
           SELECT 1 FROM "PlayerPuzzleHistory" h
           WHERE h."playerId" = ${args.playerId}

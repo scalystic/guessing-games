@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/db";
-import { samplePuzzle } from "@/lib/game/selection";
+import { samplePuzzle, type DecadeFilter } from "@/lib/game/selection";
 import { scoreSolvedRound, solveExtendsStreak } from "@/lib/game/scoring/v1";
 import { deriveHint, type RoundHint } from "@/lib/game/hint";
 import { runTokenMatches } from "@/lib/game/run-token";
@@ -331,6 +331,7 @@ type LockedRow = {
   min_popularity: number;
   sample_window: number;
   has_perfect_sync: boolean;
+  decade_filter: string | null;
   round_id: string | null;
   round_index: number | null;
   round_puzzle_id: string | null;
@@ -370,6 +371,7 @@ async function lockAndRead(tx: Tx, runId: string): Promise<LockedRow> {
       g."rampPerRound"        AS ramp_per_round,
       g."minPopularity"       AS min_popularity,
       g."sampleWindow"        AS sample_window,
+      r."decadeFilter"::text  AS decade_filter,
       EXISTS (
         SELECT 1 FROM "RunRound" p
         WHERE p."runId" = r.id AND p.outcome = 'SOLVED' AND p."attemptsUsed" = 1
@@ -428,6 +430,7 @@ type RunFacts = {
   score: number;
   roundsSolved: number;
   hasPerfectSync: boolean;
+  decadeFilter: DecadeFilter | null;
   ladderRevision: number;
   maxAttempts: number;
   ladder: number[];
@@ -482,6 +485,7 @@ function facts(row: LockedRow, runId: string): { run: RunFacts; round: RoundFact
       score: row.score,
       roundsSolved: row.rounds_solved,
       hasPerfectSync: row.has_perfect_sync,
+      decadeFilter: row.decade_filter as DecadeFilter | null,
       ladderRevision: row.ladder_revision,
       maxAttempts: row.max_attempts,
       ladder: ladderOf(row),
@@ -883,6 +887,7 @@ async function resolveAndAdvance(
         maxAttempts: run.maxAttempts,
         cooldownDays: run.curve.puzzleCooldownDays,
         excludePuzzleIds: used.map((r) => r.puzzleId),
+        decadeFilter: run.decadeFilter,
       },
       tx,
     );

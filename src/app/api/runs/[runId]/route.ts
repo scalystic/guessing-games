@@ -81,6 +81,7 @@ export async function GET(
         roundsSolved: true,
         roundsFailed: true,
         expiresAt: true,
+        decadeFilter: true,
         game: {
           select: {
             slug: true,
@@ -231,6 +232,7 @@ export async function GET(
       runId,
       gameSlug: run.game.slug,
       mode: run.mode,
+      decadeFilter: run.decadeFilter,
       runStatus: run.status,
       maxAttempts: run.game.maxAttempts,
       revealLadder: toLadder(run.game.revealLadder),

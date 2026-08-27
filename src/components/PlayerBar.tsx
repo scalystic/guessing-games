@@ -10,6 +10,12 @@ type Props = {
   ladder: number[];
   loading: boolean;
   waveformSeed: string;
+  /// When set, the play button calls this instead of playing a clip, and is
+  /// never disabled for lack of one — the pre-round state, before an era has
+  /// been picked and there's anything loaded to play.
+  onPlayRequested?: () => void;
+  promptTitle?: string;
+  promptSubtitle?: string;
 };
 
 const BAR_COUNT = 32;
@@ -28,6 +34,9 @@ export function PlayerBar({
   ladder,
   loading,
   waveformSeed,
+  onPlayRequested,
+  promptTitle,
+  promptSubtitle,
 }: Props) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const fadeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -141,7 +150,7 @@ export function PlayerBar({
 
   const playedPct = totalMs > 0 ? Math.min(100, (progressMs / totalMs) * 100) : 0;
   const bars = useMemo(() => waveformBars(waveformSeed, BAR_COUNT), [waveformSeed]);
-  const disabled = loading || !audioUrl;
+  const disabled = onPlayRequested ? loading : loading || !audioUrl;
 
   return (
     <section className="signal-deck rounded-[18px] p-4 text-[#f2e9d8] sm:p-6" aria-label="Mystery audio deck">
@@ -219,10 +228,10 @@ export function PlayerBar({
       <div className="mt-5 flex items-center gap-4 border-t border-[#2d3447] pt-5">
         <button
           type="button"
-          onClick={isPlaying ? handleStop : handlePlay}
+          onClick={onPlayRequested ?? (isPlaying ? handleStop : handlePlay)}
           disabled={disabled}
           className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-(--signal) text-(--signal-ink) transition-colors duration-200 hover:bg-[#ffd071] disabled:cursor-not-allowed disabled:opacity-45"
-          aria-label={isPlaying ? "Stop the clip" : `Play the ${formatDuration(revealMs)} clip`}
+          aria-label={onPlayRequested ? "Choose an era to start" : isPlaying ? "Stop the clip" : `Play the ${formatDuration(revealMs)} clip`}
         >
           {loading ? (
             <svg width="20" height="20" viewBox="0 0 20 20" className="animate-spin" fill="none" aria-hidden="true">
@@ -243,10 +252,14 @@ export function PlayerBar({
 
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-[#f2e9d8]">
-            {loading ? "Tuning the next signal…" : isPlaying ? "Listen closely" : "Think you know it?"}
+            {loading
+              ? "Tuning the next signal…"
+              : isPlaying
+                ? "Listen closely"
+                : (promptTitle ?? "Think you know it?")}
           </p>
           <p className="mt-1 text-xs text-[#8e93a3]">
-            Replay as often as you need. A miss unlocks more.
+            {promptSubtitle ?? "Replay as often as you need. A miss unlocks more."}
           </p>
         </div>
 

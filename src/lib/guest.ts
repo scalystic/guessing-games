@@ -37,20 +37,30 @@ export async function ensurePlayer(
   const session = await getSession();
 
   if (session) {
-    // Touch lastSeenAt in the background — no need to await.
-    prisma.player
-      .update({
-        where: { id: session.playerId },
-        data: { lastSeenAt: new Date() },
-      })
-      .catch(() => {
-        /* player may have been deleted; silently ignore */
-      });
+    const player = await prisma.player.findUnique({
+      where: { id: session.playerId },
+      select: { id: true },
+    });
 
-    return { playerId: session.playerId, isNew: false };
+    if (player) {
+      // Touch lastSeenAt in the background — no need to await.
+      prisma.player
+        .update({
+          where: { id: session.playerId },
+          data: { lastSeenAt: new Date() },
+        })
+        .catch(() => {
+          /* player was deleted between the check above and here; silently ignore */
+        });
+
+      return { playerId: session.playerId, isNew: false };
+    }
+    // Session cookie points at a player row that no longer exists — fall
+    // through and mint a fresh guest instead of handing back a playerId that
+    // makes every write downstream fail Run_playerId_fkey.
   }
 
-  // No session — mint a new guest.
+  // No session, or a stale one — mint a new guest.
   const player = await prisma.player.create({
     data: {
       kind: "GUEST",

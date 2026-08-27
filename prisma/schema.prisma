@@ -308,6 +308,12 @@ model Song {
   isrc       String?
   externalId String?
 
+  /// Columns from an abandoned preview-audio feature. Never wired into any
+  /// route or script — kept here only so schema.prisma matches the live
+  /// database instead of silently diverging from it.
+  previewAudioKey      String?
+  previewAudioMimeType String?
+
   /// Accepted alternate titles, for the typeahead index.
   aliases    String[]
   /// Normalized title+artist for trigram search. Populated at ingest.
@@ -316,6 +322,8 @@ model Song {
   puzzle Puzzle @relation(fields: [puzzleId], references: [id], onDelete: Cascade)
 
   @@index([artist])
+  /// Backs the era filter in puzzle selection (src/lib/game/selection.ts).
+  @@index([decade])
   /// Trigram GIN, not btree — the typeahead matches on substrings and
   /// similarity, which a btree can't serve. Declared here rather than left to a
   /// raw migration so Prisma keeps managing it; the pg_trgm extension it depends
@@ -386,6 +394,15 @@ enum RunStatus {
   EXPIRED
 }
 
+/// Player-chosen era filter, narrowing which Song.decade a run samples from.
+/// Null on Run means no filter (all eras).
+enum RunEra {
+  /// Song.decade 1960-1990 (release years 1960-1999).
+  NINETIES
+  /// Song.decade 2000 and up.
+  TWO_THOUSANDS
+}
+
 model Run {
   id       String @id @default(cuid())
   gameId   String
@@ -403,6 +420,12 @@ model Run {
   /// Drives puzzle selection for PRACTICE/ENDLESS; copied from the challenge
   /// for DAILY. Persisted so a run is always reproducible.
   seed String
+
+  /// Player-chosen era category. Null = all eras. Persisted (rather than
+  /// re-sent per request) because samplePuzzle() runs again server-side on
+  /// every round advance (see applyAttempt in src/lib/game/attempt.ts), not
+  /// just at run start.
+  decadeFilter RunEra?
 
   status RunStatus @default(IN_PROGRESS)
 
