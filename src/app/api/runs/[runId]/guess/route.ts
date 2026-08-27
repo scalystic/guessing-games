@@ -1,7 +1,6 @@
 import { z } from "zod";
-import { prisma } from "@/lib/db";
 import { internalErrorJson, jsonError, jsonOk } from "@/lib/api/response";
-import { readRunToken, runTokenMatches } from "@/lib/game/run-token";
+import { readRunToken } from "@/lib/game/run-token";
 import { applyAttempt, AttemptFailure } from "@/lib/game/attempt";
 
 /// POST /api/runs/[runId]/guess
@@ -38,16 +37,13 @@ export async function POST(
       return jsonError(400, "invalid_body", "Expected { guessedPuzzleId?, idempotencyKey }.");
     }
 
-    const run = await prisma.run.findUnique({
-      where: { id: runId },
-      select: { tokenHash: true },
-    });
-    if (!run || !runTokenMatches(token, run.tokenHash)) {
-      return jsonError(404, "not_found", "No such run.");
-    }
-
+    // The token is verified inside applyAttempt's locking read rather than by a
+    // findUnique here. It is the same check against the same column; doing it
+    // here cost an extra round trip to read a row the transaction was about to
+    // SELECT ... FOR UPDATE anyway.
     const result = await applyAttempt({
       runId,
+      runToken: token,
       idempotencyKey: parsed.data.idempotencyKey,
       guessedPuzzleId: parsed.data.guessedPuzzleId ?? null,
       rawInput: parsed.data.rawInput ?? null,
@@ -57,6 +53,9 @@ export async function POST(
     return jsonOk(result);
   } catch (error) {
     if (error instanceof AttemptFailure) {
+      if (error.detail.kind === "not_found") {
+        return jsonError(404, "not_found", "No such run.");
+      }
       return jsonError(409, error.detail.kind, describeFailure(error));
     }
     return internalErrorJson("runs.guess", error);
@@ -65,6 +64,8 @@ export async function POST(
 
 function describeFailure(error: AttemptFailure): string {
   switch (error.detail.kind) {
+    case "not_found":
+      return "No such run.";
     case "not_in_progress":
       return `Run is ${error.detail.status}.`;
     case "no_current_round":

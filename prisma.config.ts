@@ -11,6 +11,11 @@ export default defineConfig({
     seed: 'tsx prisma/seed.ts',
   },
   datasource: {
-    url: process.env['DATABASE_URL'],
+    // DIRECT_URL first so migrations keep working if DATABASE_URL is ever pointed
+    // at a connection pooler. PgBouncer in transaction mode cannot run the
+    // session-level statements migrations need (advisory locks, CREATE INDEX
+    // CONCURRENTLY), so a migration must always reach Postgres directly.
+    // Unset by default — DATABASE_URL is direct today.
+    url: process.env['DIRECT_URL'] ?? process.env['DATABASE_URL'],
   },
 })

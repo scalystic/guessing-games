@@ -23,6 +23,32 @@ const MIN_QUERY_LENGTH = 2;
 const DEFAULT_LIMIT = 8;
 const MAX_LIMIT = 20;
 
+/// Cached slug -> game config, because this route runs on every keystroke.
+///
+/// Looking it up cost a round trip BEFORE the search query could even start —
+/// roughly half the latency of a typeahead request spent re-reading two columns
+/// that change when an admin edits the game, which is approximately never.
+///
+/// A short TTL rather than a permanent cache so an edit takes effect without a
+/// deploy, and per-process so there is nothing to invalidate.
+const GAME_CACHE_TTL_MS = 60_000;
+const gameCache = new Map<string, { at: number; game: { id: string; maxAttempts: number } | null }>();
+
+async function activeGame(slug: string): Promise<{ id: string; maxAttempts: number } | null> {
+  const hit = gameCache.get(slug);
+  if (hit && Date.now() - hit.at < GAME_CACHE_TTL_MS) return hit.game;
+
+  const game = await prisma.game.findFirst({
+    where: { slug, isActive: true },
+    select: { id: true, maxAttempts: true },
+  });
+
+  // Misses are cached too — otherwise a bad slug typed into the URL bar would
+  // hit the database once per keystroke.
+  gameCache.set(slug, { at: Date.now(), game });
+  return game;
+}
+
 type Row = {
   puzzleId: string;
   title: string;
@@ -51,10 +77,7 @@ export async function GET(
     // first one or two are legitimately too short to answer.
     if (query.length < MIN_QUERY_LENGTH) return jsonOk([]);
 
-    const game = await prisma.game.findFirst({
-      where: { slug, isActive: true },
-      select: { id: true, maxAttempts: true },
-    });
+    const game = await activeGame(slug);
     if (!game) return notFoundJson(`No active game with slug "${slug}".`);
 
     // Raw SQL because none of the three things this query needs are expressible

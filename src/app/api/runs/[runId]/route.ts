@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { internalErrorJson, jsonError, jsonOk } from "@/lib/api/response";
 import { readRunToken, runTokenMatches } from "@/lib/game/run-token";
 import { deriveHint, type RoundHint } from "@/lib/game/hint";
-import { computeRewards } from "@/lib/game/attempt";
+import { computeRewards, inlineAudioFor } from "@/lib/game/attempt";
 
 /// GET /api/runs/[runId] — the state of a run, for resume.
 ///
@@ -81,7 +81,14 @@ export async function GET(
         roundsSolved: true,
         roundsFailed: true,
         expiresAt: true,
-        game: { select: { slug: true, maxAttempts: true, revealLadder: true } },
+        game: {
+          select: {
+            slug: true,
+            maxAttempts: true,
+            revealLadder: true,
+            ladderRevision: true,
+          },
+        },
       },
     });
 
@@ -113,6 +120,18 @@ export async function GET(
                 releaseYear: true,
                 decade: true,
                 genres: true,
+              },
+            },
+            // Only the current round's asset is used, but selecting it here is
+            // free — it rides the join this query already makes — and it lets a
+            // resume inline its audio instead of making a second request.
+            assets: {
+              where: { kind: "AUDIO_CLIP" as const },
+              select: {
+                storageKey: true,
+                stageByteOffsets: true,
+                byteSize: true,
+                ladderRevision: true,
               },
             },
           },
@@ -197,7 +216,16 @@ export async function GET(
           : null,
       }));
 
-    const rewards = await computeRewards(prisma, runId, run.score, run.bestStreak);
+    // Pure now, and derived from rows this handler already holds — it used to be
+    // an extra query for two numbers that were sitting right here.
+    const rewards = computeRewards({
+      score: run.score,
+      bestStreak: run.bestStreak,
+      roundsSolved: run.roundsSolved,
+      hasPerfectSync: rounds.some(
+        (round) => round.outcome === "SOLVED" && round.attemptsUsed === 1,
+      ),
+    });
 
     return jsonOk({
       runId,
@@ -215,6 +243,16 @@ export async function GET(
       expiresAt: run.expiresAt,
       // Null once the run is over — there is no more audio to earn.
       audioUrl: run.status === "IN_PROGRESS" && current ? `/api/runs/${runId}/audio` : null,
+      // A resume used to be two requests: this one, then /audio. The asset came
+      // along with the round above, so the bytes can too.
+      nextAudio:
+        run.status === "IN_PROGRESS" && currentRound?.puzzle.assets[0]
+          ? await inlineAudioFor(
+              currentRound.puzzle.assets[0],
+              currentRound.stageReached,
+              run.game.ladderRevision,
+            )
+          : null,
       current,
       past,
       ...rewards,

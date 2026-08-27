@@ -1,7 +1,6 @@
 import { z } from "zod";
-import { prisma } from "@/lib/db";
 import { internalErrorJson, jsonError, jsonOk } from "@/lib/api/response";
-import { readRunToken, runTokenMatches } from "@/lib/game/run-token";
+import { readRunToken } from "@/lib/game/run-token";
 import { applyAttempt, AttemptFailure } from "@/lib/game/attempt";
 
 /// POST /api/runs/[runId]/skip
@@ -33,16 +32,10 @@ export async function POST(
       return jsonError(400, "invalid_body", "Expected { idempotencyKey }.");
     }
 
-    const run = await prisma.run.findUnique({
-      where: { id: runId },
-      select: { tokenHash: true },
-    });
-    if (!run || !runTokenMatches(token, run.tokenHash)) {
-      return jsonError(404, "not_found", "No such run.");
-    }
-
+    // Token verified inside the locking read — see the note in guess/route.ts.
     const result = await applyAttempt({
       runId,
+      runToken: token,
       idempotencyKey: parsed.data.idempotencyKey,
       guessedPuzzleId: null,
       rawInput: null,
@@ -52,6 +45,9 @@ export async function POST(
     return jsonOk(result);
   } catch (error) {
     if (error instanceof AttemptFailure) {
+      if (error.detail.kind === "not_found") {
+        return jsonError(404, "not_found", "No such run.");
+      }
       return jsonError(409, error.detail.kind, "This round cannot take another attempt.");
     }
     return internalErrorJson("runs.skip", error);

@@ -31,7 +31,16 @@ export function AttemptTimeline({ guesses, currentAttempt, maxAttempts }: Props)
           let color = "var(--text-faint)";
           let background = "transparent";
 
-          if (record?.correct) {
+          if (record?.pending) {
+            // Claimed the instant the player submitted, before the server has
+            // ruled. Shown as in-flight rather than as a miss — the slot is
+            // certainly spent, but the verdict genuinely isn't known yet.
+            content = "•••";
+            label = `Attempt ${i + 1}, submitted`;
+            border = "var(--signal)";
+            color = "var(--text-dim)";
+            background = "color-mix(in srgb, var(--signal) 6%, transparent)";
+          } else if (record?.correct) {
             content = "OK";
             label = `Attempt ${i + 1}, correct`;
             border = "var(--success)";

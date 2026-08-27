@@ -28,7 +28,8 @@
     "db:format": "prisma format",
     "metadata": "tsx scripts/fetch-metadata.ts",
     "purge:catalog": "tsx scripts/purge-catalog.ts",
-    "purge:storage": "tsx scripts/purge-storage.ts"
+    "purge:storage": "tsx scripts/purge-storage.ts",
+    "purge:players": "tsx scripts/purge-players.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1115.0",
