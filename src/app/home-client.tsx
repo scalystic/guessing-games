@@ -15,6 +15,7 @@ import { HowToPlayList } from "@/components/HowToPlayList";
 import { Modal } from "@/components/Modal";
 import { StatsList } from "@/components/StatsList";
 import { RoundHistoryList } from "@/components/RoundHistoryList";
+import { MultiplayerEntry } from "@/components/MultiplayerEntry";
 
 const FREE_GUEST_ROUNDS = 5;
 
@@ -210,7 +211,7 @@ function EraDialog({
               id="era-dialog-title"
               className="mt-1 font-[family-name:var(--font-display)] text-2xl font-semibold leading-none text-(--text)"
             >
-              Pick the decade you're playing.
+              Pick the decade you&apos;re playing.
             </h2>
           </div>
           <button
@@ -332,6 +333,7 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
           <nav className="flex shrink-0 items-center gap-2" aria-label="Game controls">
             <HeaderAction label="Stats" icon={<StatsIcon />} onClick={() => setShowStats(true)} />
             <HeaderAction label="How to play" icon={<HelpIcon />} onClick={() => setShowHelp(true)} />
+            <MultiplayerEntry gameSlug={config.slug} tagline={config.tagline} revealLadder={config.revealLadder} maxAttempts={config.maxAttempts} />
             <ProfileMenu user={user} />
           </nav>
         </header>

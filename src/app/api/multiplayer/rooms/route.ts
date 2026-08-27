@@ -1,8 +1,8 @@
 import { z } from 'zod'
 import { prisma } from '@/lib/db'
 import { jsonError, jsonOk } from '@/lib/api/response'
-import { getSession } from '@/lib/session'
-import { randomBytes } from 'crypto'
+import { ensurePlayer } from '@/lib/guest'
+import { randomBytes } from 'node:crypto'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,10 +16,18 @@ function generateRoomCode(): string {
   return randomBytes(3).toString('hex').toUpperCase()
 }
 
+function clientIp(request: Request): string | null {
+  const forwarded = request.headers.get('x-forwarded-for')
+  return forwarded?.split(',')[0]?.trim() ?? null
+}
+
 export async function POST(request: Request): Promise<Response> {
   try {
-    const session = await getSession()
-    if (!session) return jsonError(401, 'unauthorized', 'Login required to create a room')
+    // Guests are real Player rows from the first tap (see schema notes on
+    // Player) — multiplayer shouldn't be the one feature that requires
+    // signing up first, so a room host is provisioned exactly like starting
+    // a solo run does.
+    const { playerId } = await ensurePlayer(clientIp(request))
 
     const parsed = BodySchema.safeParse(await request.json().catch(() => null))
     if (!parsed.success) return jsonError(400, 'invalid_body', 'Expected { gameSlug, totalRounds?, maxPlayers? }')
@@ -45,14 +53,14 @@ export async function POST(request: Request): Promise<Response> {
       data: {
         code,
         gameId: game.id,
-        hostPlayerId: session.playerId,
+        hostPlayerId: playerId,
         totalRounds,
         maxPlayers,
         seed: randomBytes(16).toString('hex'),
         expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
         players: {
           create: {
-            playerId: session.playerId,
+            playerId,
             seatIndex: 0,
             status: 'WAITING',
           },
@@ -60,7 +68,7 @@ export async function POST(request: Request): Promise<Response> {
       },
     })
 
-    return jsonOk({ code: room.code, roomId: room.id })
+    return jsonOk({ code: room.code, roomId: room.id, playerId })
   } catch (e) {
     console.error('[api] create room error', e)
     return jsonError(500, 'internal_error', 'Failed to create room')

@@ -76,6 +76,7 @@ export function RoomClient({ code, playerId }: Props) {
   useEffect(() => {
     if (phase === 'playing' && myRun) {
       const generation = ++generationRef.current
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setRoundDone(false)
       setGuessedPuzzleIds(new Set())
       setStageReached(1)
@@ -217,38 +218,7 @@ export function RoomClient({ code, playerId }: Props) {
     )
   }
 
-  if (phase === 'round_results' && roundResults) {
-    return (
-      <div className="flex flex-1 flex-col items-center bg-zinc-50 font-sans dark:bg-black">
-        <main className="flex w-full max-w-2xl flex-1 flex-col gap-6 bg-white px-6 py-16 sm:px-12 dark:bg-black">
-          <header className="flex flex-col gap-1">
-            <p className="font-mono text-xs font-semibold uppercase tracking-widest text-zinc-500">Round {roundResults.roundIndex} results</p>
-            <h2 className="text-2xl font-semibold text-black dark:text-zinc-50">{roundResults.puzzle.title}</h2>
-            <p className="text-zinc-500 dark:text-zinc-400">
-              {roundResults.puzzle.artist}
-              {roundResults.puzzle.album ? ` · ${roundResults.puzzle.album}` : ''}
-              {roundResults.puzzle.releaseYear ? ` · ${roundResults.puzzle.releaseYear}` : ''}
-            </p>
-          </header>
-          <div className="flex flex-col gap-2">
-            {roundResults.playerResults.map((pr) => (
-              <div key={pr.playerId} className="flex items-center gap-3 rounded-lg border border-black/8 px-4 py-3 dark:border-white/[.145]">
-                <span className={`h-2 w-2 rounded-full ${pr.outcome === 'SOLVED' ? 'bg-green-500' : 'bg-red-400'}`} />
-                <span className="flex-1 text-sm font-medium text-black dark:text-zinc-50">{pr.displayName}</span>
-                <span className="text-sm text-zinc-500 dark:text-zinc-400">
-                  {pr.outcome === 'SOLVED' ? `+${pr.points} pts` : 'No points'}
-                </span>
-                <span className="text-xs text-zinc-400 dark:text-zinc-500">
-                  {pr.attemptsUsed}/{maxAttempts} attempts
-                </span>
-              </div>
-            ))}
-          </div>
-          <p className="text-center text-sm text-zinc-500 dark:text-zinc-400">Next round starting soon…</p>
-        </main>
-      </div>
-    )
-  }
+
 
   if (phase === 'lobby') {
     return (
@@ -298,7 +268,7 @@ export function RoomClient({ code, playerId }: Props) {
             )}
             {isHost && (
               <button
-                onClick={startGame}
+                onClick={() => startGame()}
                 disabled={players.length < 1}
                 className="flex-1 rounded-lg bg-black px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-200"
               >
@@ -420,6 +390,49 @@ export function RoomClient({ code, playerId }: Props) {
           </div>
         </div>
       </main>
+
+      {/* Round Results Popup Modal */}
+      {phase === 'round_results' && roundResults && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-[2px] animate-[pop-in_0.35s_cubic-bezier(0.16,1,0.3,1)]">
+          <div className="w-full max-w-md rounded-xl border border-black/8 bg-white p-6 shadow-2xl dark:border-white/[.145] dark:bg-zinc-900">
+            <div className="mb-4">
+              <span className="font-mono text-xs font-semibold uppercase tracking-widest text-zinc-500">
+                Round {roundResults.roundIndex} Results
+              </span>
+              <h2 className="mt-1 text-xl font-semibold text-black dark:text-zinc-50">{roundResults.puzzle.title}</h2>
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                {roundResults.puzzle.artist}
+                {roundResults.puzzle.album ? ` · ${roundResults.puzzle.album}` : ''}
+                {roundResults.puzzle.releaseYear ? ` · ${roundResults.puzzle.releaseYear}` : ''}
+              </p>
+            </div>
+            
+            <div className="flex flex-col gap-2 max-h-[240px] overflow-y-auto pr-1">
+              {[...roundResults.playerResults]
+                .sort((a, b) => b.points - a.points)
+                .map((pr) => (
+                  <div key={pr.playerId} className="flex items-center gap-3 rounded-lg border border-black/8 px-4 py-2.5 dark:border-white/[.145] dark:bg-zinc-950/40">
+                    <span className={`h-2 w-2 rounded-full ${pr.outcome === 'SOLVED' ? 'bg-green-500' : 'bg-red-400'}`} />
+                    <span className="flex-1 text-sm font-medium text-black dark:text-zinc-50">{pr.displayName}</span>
+                    <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+                      {pr.outcome === 'SOLVED' ? `+${pr.points} pts` : '—'}
+                    </span>
+                    <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                      {pr.attemptsUsed}/{maxAttempts}
+                    </span>
+                  </div>
+                ))}
+            </div>
+            
+            <div className="mt-5 border-t border-black/8 dark:border-white/[.145] pt-4 flex flex-col items-center">
+              <p className="text-center text-sm text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-zinc-500 dark:bg-zinc-400 animate-ping" />
+                Next round starting soon…
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

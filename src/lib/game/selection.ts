@@ -1,6 +1,8 @@
 import "server-only";
-import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
+import { decadeClause, type DecadeFilter } from "@/lib/game/decade-filter";
+
+export type { DecadeFilter };
 
 /// Puzzle selection. Difficulty ramps WITHIN a run: round 1 targets the top of
 /// the catalog and each later round slides toward obscurity. There are no
@@ -25,8 +27,6 @@ export function targetPopularity(curve: SelectionCurve, roundIndex: number): num
 /// ignores it entirely so a run can always continue.
 const WINDOW_MULTIPLIERS = [1, 2, 4, Number.POSITIVE_INFINITY];
 
-export type DecadeFilter = "NINETIES" | "TWO_THOUSANDS";
-
 export type SampleArgs = {
   gameId: string;
   playerId: string;
@@ -41,16 +41,6 @@ export type SampleArgs = {
   /// Player-chosen era category. Null/undefined = every era.
   decadeFilter?: DecadeFilter | null;
 };
-
-/// Song.decade stores the decade-start year (e.g. 1990), so "the 90s and
-/// earlier" and "2000 onward" are each a range of decade-start values, not a
-/// single one. TWO_THOUSANDS has no upper bound — the catalog never has
-/// decade values ahead of the current one.
-function decadeClause(filter: DecadeFilter | null | undefined) {
-  if (filter === "NINETIES") return Prisma.sql`AND s.decade BETWEEN 1960 AND 1990`;
-  if (filter === "TWO_THOUSANDS") return Prisma.sql`AND s.decade >= 2000`;
-  return Prisma.empty;
-}
 
 export type SampledPuzzle = {
   puzzleId: string;

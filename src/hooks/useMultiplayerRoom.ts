@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { io, Socket } from 'socket.io-client'
-import type { ServerToClientEvents, ClientToServerEvents, RoomInfo, RoomPlayerInfo, RoundResults, FinalRanking } from '@/lib/multiplayer/types'
+import type { ServerToClientEvents, ClientToServerEvents, RoomInfo, RoomPlayerInfo, RoundResults, FinalRanking, ChatMessageData } from '@/lib/multiplayer/types'
+import type { DecadeFilter } from '@/lib/game/decade-filter'
 
 export type MultiplayerPhase = 'connecting' | 'lobby' | 'starting' | 'playing' | 'round_results' | 'game_end' | 'error'
 
@@ -13,14 +14,16 @@ export type UseMultiplayerRoomResult = {
   myRun: { runId: string; runToken: string } | null
   roundResults: RoundResults | null
   finalRankings: FinalRanking[]
-  roundProgress: Map<string, { done: boolean; outcome: 'SOLVED' | 'FAILED' | null }>
+  roundProgress: Map<string, { displayName: string; done: boolean; outcome: 'SOLVED' | 'FAILED' | null; points: number | null }>
+  chatMessages: ChatMessageData[]
   error: string | null
   markReady: () => void
-  startGame: () => void
+  startGame: (decadeFilter?: DecadeFilter | null) => void
   notifyRoundDone: (roundIndex: number, outcome: 'SOLVED' | 'FAILED') => void
+  sendChat: (text: string) => void
 }
 
-export function useMultiplayerRoom(code: string, playerId: string | null): UseMultiplayerRoomResult {
+export function useMultiplayerRoom(code: string | null, playerId: string | null): UseMultiplayerRoomResult {
   const socketRef = useRef<Socket<ServerToClientEvents, ClientToServerEvents> | null>(null)
   const [phase, setPhase] = useState<MultiplayerPhase>('connecting')
   const [room, setRoom] = useState<RoomInfo | null>(null)
@@ -28,11 +31,12 @@ export function useMultiplayerRoom(code: string, playerId: string | null): UseMu
   const [myRun, setMyRun] = useState<{ runId: string; runToken: string } | null>(null)
   const [roundResults, setRoundResults] = useState<RoundResults | null>(null)
   const [finalRankings, setFinalRankings] = useState<FinalRanking[]>([])
-  const [roundProgress, setRoundProgress] = useState<Map<string, { done: boolean; outcome: 'SOLVED' | 'FAILED' | null }>>(new Map())
+  const [roundProgress, setRoundProgress] = useState<Map<string, { displayName: string; done: boolean; outcome: 'SOLVED' | 'FAILED' | null; points: number | null }>>(new Map())
+  const [chatMessages, setChatMessages] = useState<ChatMessageData[]>([])
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!playerId) return
+    if (!playerId || !code) return
 
     const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io({
       path: '/ws/socket.io',
@@ -81,10 +85,10 @@ export function useMultiplayerRoom(code: string, playerId: string | null): UseMu
       setRoundProgress(new Map())
     })
 
-    socket.on('round:progress', ({ playerId: pid, done, outcome }) => {
+    socket.on('round:progress', ({ playerId: pid, displayName, done, outcome, points }) => {
       setRoundProgress((prev) => {
         const next = new Map(prev)
-        next.set(pid, { done, outcome })
+        next.set(pid, { displayName, done, outcome, points })
         return next
       })
     })
@@ -99,22 +103,50 @@ export function useMultiplayerRoom(code: string, playerId: string | null): UseMu
       setPhase('game_end')
     })
 
+    socket.on('room:chat', (message) => {
+      setChatMessages((prev) => [...prev, message])
+    })
+
     return () => {
       socket.disconnect()
       socketRef.current = null
+
+      // Runs when [code, playerId] changes (leaving one room and connecting
+      // to another) as well as on unmount. Without this, the hook's state
+      // survives leave-then-create-another-room — since it's the same
+      // component instance throughout — and the new room's lobby would open
+      // showing the last room's chat, round:progress dots, and rankings.
+      setPhase('connecting')
+      setRoom(null)
+      setPlayers([])
+      setMyRun(null)
+      setRoundResults(null)
+      setFinalRankings([])
+      setRoundProgress(new Map())
+      setChatMessages([])
+      setError(null)
     }
   }, [code, playerId])
 
   const markReady = useCallback(() => {
+    if (!code) return
     socketRef.current?.emit('room:ready', { code })
   }, [code])
 
-  const startGame = useCallback(() => {
-    socketRef.current?.emit('room:start', { code })
+  const startGame = useCallback((decadeFilter?: DecadeFilter | null) => {
+    if (!code) return
+    socketRef.current?.emit('room:start', { code, decadeFilter })
   }, [code])
 
   const notifyRoundDone = useCallback((roundIndex: number, outcome: 'SOLVED' | 'FAILED') => {
+    if (!code) return
     socketRef.current?.emit('round:done', { code, roundIndex, outcome })
+  }, [code])
+
+  const sendChat = useCallback((text: string) => {
+    const trimmed = text.trim()
+    if (!trimmed || !code) return
+    socketRef.current?.emit('room:chat', { code, text: trimmed })
   }, [code])
 
   return {
@@ -126,9 +158,11 @@ export function useMultiplayerRoom(code: string, playerId: string | null): UseMu
     roundResults,
     finalRankings,
     roundProgress,
+    chatMessages,
     error,
     markReady,
     startGame,
     notifyRoundDone,
+    sendChat,
   }
 }
