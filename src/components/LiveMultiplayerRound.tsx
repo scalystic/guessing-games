@@ -74,6 +74,7 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [roundDone, setRoundDone] = useState(false);
   const [lastPoints, setLastPoints] = useState<number | null>(null);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [currentStreak, setCurrentStreak] = useState(0);
   const [hint, setHint] = useState<RoundHint | null>(null);
 
@@ -281,7 +282,7 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
         </div>
         <button
           type="button"
-          onClick={onLeave}
+          onClick={() => setShowLeaveConfirm(true)}
           className="mt-5 h-11 w-full rounded-[7px] bg-(--signal) text-sm font-bold text-(--signal-ink) transition-colors duration-200 hover:bg-[#ffd071]"
         >
           Done
@@ -316,7 +317,7 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
               </span>
               <button
                 type="button"
-                onClick={onLeave}
+                onClick={() => setShowLeaveConfirm(true)}
                 className="flex h-10 items-center gap-2 rounded-full border border-(--miss)/45 bg-(--surface) px-3 text-sm font-semibold text-(--miss) transition-colors duration-200 hover:bg-(--miss)/12"
               >
                 <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
@@ -583,6 +584,41 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
           </div>
         </div>
       )}
+
+      {showLeaveConfirm && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          onClick={() => setShowLeaveConfirm(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-[14px] border border-(--hairline) bg-(--surface-strong) p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold text-(--text)">
+              Leave the room?
+            </h2>
+            <p className="mt-2 text-sm text-(--text-dim)">
+              The game is in progress. Leaving now will remove you from the round.
+            </p>
+            <div className="mt-5 flex gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowLeaveConfirm(false)}
+                className="h-10 flex-1 rounded-[7px] border border-(--hairline) text-sm font-semibold text-(--text-dim) transition-colors duration-200 hover:bg-(--surface-hover)"
+              >
+                Stay
+              </button>
+              <button
+                type="button"
+                onClick={onLeave}
+                className="h-10 flex-1 rounded-[7px] bg-(--miss) text-sm font-bold text-white transition-colors duration-200 hover:opacity-90"
+              >
+                Leave room
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -690,7 +726,7 @@ function RoundShell({ roomCode, title, onLeave, children }: { roomCode: string; 
           </div>
           <button
             type="button"
-            onClick={onLeave}
+            onClick={() => setShowLeaveConfirm(true)}
             className="shrink-0 rounded-full border border-(--hairline) px-3 py-1.5 text-xs font-semibold text-(--text-dim) transition-colors duration-200 hover:bg-(--surface-hover)"
           >
             Leave

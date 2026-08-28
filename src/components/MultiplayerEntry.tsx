@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { useRouter } from "next/navigation";
 import { MultiplayerPickerModal } from "@/components/MultiplayerPickerModal";
 import { RoomLobby } from "@/components/RoomLobby";
 import { LiveMultiplayerRound } from "@/components/LiveMultiplayerRound";
@@ -36,6 +37,7 @@ async function postJson<T>(url: string, body?: unknown): Promise<ApiEnvelope<T>>
 // down and reconnects the socket mid-game. Which of those two renders is driven
 // entirely by `mp.phase`, which the server sets via room:state/round:start/etc.
 export function MultiplayerEntry({ gameSlug, tagline, revealLadder, maxAttempts }: Props) {
+  const router = useRouter();
   const [view, setView] = useState<View>("closed");
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
@@ -48,22 +50,18 @@ export function MultiplayerEntry({ gameSlug, tagline, revealLadder, maxAttempts 
       { gameSlug, totalRounds: 5, maxPlayers: 5 },
     );
     if (!body.data) return body.error?.message ?? "Failed to create room.";
-    setPlayerId(body.data.playerId);
-    setRoomCode(body.data.code);
-    setView("room");
+    router.push(`/multiplayer/room/${body.data.code}`);
     return null;
-  }, [gameSlug]);
+  }, [gameSlug, router]);
 
   const handleJoin = useCallback(async (code: string): Promise<string | null> => {
     const body = await postJson<{ code: string; alreadyJoined: boolean; playerId: string }>(
       `/api/multiplayer/rooms/${encodeURIComponent(code.trim().toUpperCase())}/join`,
     );
     if (!body.data) return body.error?.message ?? "Failed to join room.";
-    setPlayerId(body.data.playerId);
-    setRoomCode(body.data.code);
-    setView("room");
+    router.push(`/multiplayer/room/${body.data.code}`);
     return null;
-  }, []);
+  }, [router]);
 
   const handleLeave = useCallback(() => {
     setView("closed");

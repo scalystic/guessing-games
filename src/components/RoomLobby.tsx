@@ -32,6 +32,12 @@ export function RoomLobby({ mp, roomCode, onLeave }: Props) {
   const isHost = myPlayer?.isHost ?? false;
   const views = players.map((p) => toPlayerView(p, myPlayerId));
   const [era, setEra] = useState<DecadeFilter | null>(null);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const isLive = phase === "playing" || phase === "round_results" || phase === "game_end";
+
+  function requestLeave() {
+    setShowLeaveConfirm(true);
+  }
 
   // Player-joined/left system lines, derived by diffing the roster the server
   // hands us — no protocol change needed just to narrate arrivals in the chat.
@@ -78,7 +84,7 @@ export function RoomLobby({ mp, roomCode, onLeave }: Props) {
 
   if (phase === "connecting" || !room) {
     return (
-      <LobbyShell onLeave={onLeave} subtitle="Connecting…">
+      <LobbyShell onLeave={requestLeave} subtitle="Connecting…">
         <div className="flex flex-1 items-center justify-center rounded-[14px] border border-(--hairline) bg-(--surface) p-10">
           <p className="text-sm text-(--text-faint)">Connecting to room {roomCode}…</p>
         </div>
@@ -88,7 +94,7 @@ export function RoomLobby({ mp, roomCode, onLeave }: Props) {
 
   if (phase === "error") {
     return (
-      <LobbyShell onLeave={onLeave} subtitle="Couldn't join">
+      <LobbyShell onLeave={requestLeave} subtitle="Couldn't join">
         <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-[14px] border border-(--miss)/40 bg-(--surface) p-10 text-center">
           <p className="text-sm font-semibold text-(--miss)">{error ?? "Something went wrong."}</p>
           <button
@@ -105,7 +111,7 @@ export function RoomLobby({ mp, roomCode, onLeave }: Props) {
 
   if (phase === "starting") {
     return (
-      <LobbyShell onLeave={onLeave} subtitle="Starting…">
+      <LobbyShell onLeave={requestLeave} subtitle="Starting…">
         <div className="flex flex-1 items-center justify-center rounded-[14px] border border-(--hairline) bg-(--surface) p-10">
           <p className="text-sm text-(--text-faint)">Game starting…</p>
         </div>
@@ -116,7 +122,7 @@ export function RoomLobby({ mp, roomCode, onLeave }: Props) {
   const emptySlots = Math.max(0, room.maxPlayers - views.length);
 
   return (
-    <LobbyShell onLeave={onLeave} subtitle="Lobby · waiting to start">
+    <LobbyShell onLeave={requestLeave} subtitle="Lobby · waiting to start">
       <div className="mt-5 flex flex-col gap-4 min-[900px]:grid min-[900px]:grid-cols-[1fr_340px] min-[900px]:items-start min-[900px]:gap-5">
         <div className="flex flex-col gap-4.5 rounded-[14px] border border-(--hairline) bg-(--surface) p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -200,7 +206,7 @@ export function RoomLobby({ mp, roomCode, onLeave }: Props) {
             )}
             <button
               type="button"
-              onClick={onLeave}
+              onClick={requestLeave}
               className="h-11 rounded-[7px] border border-(--hairline) px-4 text-sm font-semibold text-(--text-dim) transition-colors duration-200 hover:bg-(--surface-hover)"
             >
               Leave room
@@ -216,6 +222,43 @@ export function RoomLobby({ mp, roomCode, onLeave }: Props) {
 
         <RoomChat title="Lobby chat" onlineCount={views.length} messages={messages} onSend={sendChat} />
       </div>
+
+      {showLeaveConfirm && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          onClick={() => setShowLeaveConfirm(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-[14px] border border-(--hairline) bg-(--surface-strong) p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold text-(--text)">
+              Leave the room?
+            </h2>
+            <p className="mt-2 text-sm text-(--text-dim)">
+              {isLive
+                ? "The game is in progress. Leaving now will remove you from the round."
+                : "Are you sure you want to leave this room?"}
+            </p>
+            <div className="mt-5 flex gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowLeaveConfirm(false)}
+                className="h-10 flex-1 rounded-[7px] border border-(--hairline) text-sm font-semibold text-(--text-dim) transition-colors duration-200 hover:bg-(--surface-hover)"
+              >
+                Stay
+              </button>
+              <button
+                type="button"
+                onClick={onLeave}
+                className="h-10 flex-1 rounded-[7px] bg-(--miss) text-sm font-bold text-white transition-colors duration-200 hover:opacity-90"
+              >
+                Leave room
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </LobbyShell>
   );
 }
