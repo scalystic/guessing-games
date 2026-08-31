@@ -726,7 +726,7 @@ function RoundShell({ roomCode, title, onLeave, children }: { roomCode: string; 
           </div>
           <button
             type="button"
-            onClick={() => setShowLeaveConfirm(true)}
+            onClick={onLeave}
             className="shrink-0 rounded-full border border-(--hairline) px-3 py-1.5 text-xs font-semibold text-(--text-dim) transition-colors duration-200 hover:bg-(--surface-hover)"
           >
             Leave
