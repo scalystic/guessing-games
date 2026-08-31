@@ -38,8 +38,8 @@ export async function POST(request: Request): Promise<Response> {
     }
     const { gameSlug, mode, decadeFilter } = parsed.data;
 
-    if (mode !== "PRACTICE") {
-      return jsonError(501, "mode_unavailable", `${mode} is not wired up yet.`);
+    if (mode === "ENDLESS") {
+      return jsonError(501, "mode_unavailable", `ENDLESS is not wired up yet.`);
     }
 
     const game = await prisma.game.findFirst({
@@ -60,6 +60,128 @@ export async function POST(request: Request): Promise<Response> {
     if (!game) return jsonError(404, "not_found", `No active game "${gameSlug}".`);
 
     const { playerId } = await ensurePlayer(clientIp(request));
+
+    // DAILY mode: find today's published challenge and its first puzzle.
+    if (mode === "DAILY") {
+      const todayKey = new Date().toISOString().slice(0, 10);
+
+      const challenge = await prisma.dailyChallenge.findFirst({
+        where: { gameId: game.id, dayKey: todayKey, publishedAt: { not: null } },
+        select: {
+          id: true,
+          dayKey: true,
+          roundCount: true,
+          entries: {
+            where: { roundIndex: 1 },
+            select: {
+              puzzleId: true,
+              targetPopularity: true,
+              puzzle: {
+                select: {
+                  song: { select: { externalId: true, hookStartMs: true } },
+                  assets: {
+                    where: { kind: "AUDIO_CLIP" as const },
+                    select: { storageKey: true, stageByteOffsets: true, byteSize: true, ladderRevision: true },
+                    take: 1,
+                  },
+                },
+              },
+            },
+            take: 1,
+          },
+        },
+      });
+      if (!challenge) {
+        return jsonError(404, "no_challenge_today", "No daily challenge is published for today.");
+      }
+
+      const firstEntry = challenge.entries[0];
+      if (!firstEntry) {
+        return jsonError(500, "challenge_misconfigured", "Today's challenge has no puzzles.");
+      }
+
+      // One run per player per day. If an existing run has no guesses yet
+      // (player opened the page but left without interacting), delete it so
+      // they can start fresh. Only block re-entry once real guesses exist.
+      const existing = await prisma.run.findFirst({
+        where: { playerId, gameId: game.id, dailyChallengeId: challenge.id },
+        select: {
+          id: true,
+          tokenHash: true,
+          livesRemaining: true,
+          currentRoundIndex: true,
+          rounds: { select: { attemptsUsed: true } },
+        },
+      });
+      if (existing) {
+        const hasGuesses = existing.rounds.some((r) => r.attemptsUsed > 0);
+        if (hasGuesses) {
+          return jsonError(409, "already_started", "You already have a run for today's challenge.");
+        }
+        await prisma.run.delete({ where: { id: existing.id } });
+      }
+
+      const { token, tokenHash } = mintRunToken();
+      const runId = randomUUID();
+
+      const rows = await prisma.$queryRaw<{ lives_remaining: number; current_round_index: number }[]>`
+        WITH r AS (
+          INSERT INTO "Run" (
+            id, "gameId", "playerId", mode, "dayKey", seed, "decadeFilter",
+            "dailyChallengeId", "livesRemaining", "maxRounds", "scoringVersion",
+            "isRanked", "tokenHash", "expiresAt"
+          )
+          VALUES (
+            ${runId}, ${game.id}, ${playerId}, 'DAILY'::"RunMode",
+            ${challenge.dayKey}, ${randomBytes(16).toString("hex")}, NULL,
+            ${challenge.id}, ${game.livesPerRun}, ${challenge.roundCount},
+            ${game.scoringVersion}, true,
+            ${tokenHash}, ${new Date(Date.now() + RUN_TTL_MINUTES * 60 * 1000)}
+          )
+          RETURNING id, "livesRemaining", "currentRoundIndex"
+        ),
+        rr AS (
+          INSERT INTO "RunRound" (
+            id, "runId", "roundIndex", "puzzleId",
+            "targetPopularity", "puzzlePopularity"
+          )
+          SELECT ${randomUUID()}, r.id, 1, ${firstEntry.puzzleId},
+                 ${firstEntry.targetPopularity ?? 0}, 0
+          FROM r
+          RETURNING id
+        )
+        SELECT
+          r."livesRemaining"    AS lives_remaining,
+          r."currentRoundIndex" AS current_round_index
+        FROM r, rr
+      `;
+
+      const created = rows[0];
+      if (!created) {
+        return internalErrorJson("runs.start.daily", new Error("run insert returned no row"));
+      }
+
+      const firstPuzzle = firstEntry.puzzle;
+      const firstAsset = firstPuzzle.assets[0] ?? null;
+      const youtubeVideoId = firstPuzzle.song?.externalId ?? null;
+      const hookStartMs = firstPuzzle.song?.hookStartMs ?? 0;
+      const nextAudio = firstAsset ? await inlineAudioFor(firstAsset, 1, game.ladderRevision) : null;
+
+      return jsonOk({
+        runId,
+        runToken: token,
+        mode,
+        decadeFilter: null,
+        roundIndex: created.current_round_index,
+        stageReached: 1,
+        attemptsRemaining: game.maxAttempts,
+        livesRemaining: created.lives_remaining,
+        audioUrl: `/api/runs/${runId}/audio`,
+        nextAudio,
+        youtubeVideoId,
+        hookStartMs,
+      });
+    }
 
     const pick = await samplePuzzle({
       gameId: game.id,
@@ -136,13 +258,9 @@ export async function POST(request: Request): Promise<Response> {
       currentRoundIndex: created.current_round_index,
     };
 
-    // Stage 1 rides along with the response. `begin()` on the client used to
-    // await this call and THEN fetch /audio, so starting a run cost two serial
-    // round trips before the player heard anything. The bytes are the same ones
-    // `audioUrl` serves, and the round is already open, so nothing is revealed
-    // early. Falls back to null — and therefore to the route — if the asset is
-    // unservable for any reason.
-    const nextAudio = await inlineAudioFor(pick.asset, 1, game.ladderRevision);
+    // Stage 1 rides along with the response for stored-audio songs.
+    // Falls back to null for YouTube songs (no stored clip).
+    const nextAudio = pick.asset ? await inlineAudioFor(pick.asset, 1, game.ladderRevision) : null;
 
     // The token is returned exactly once and never persisted in raw form.
     return jsonOk({
@@ -156,6 +274,8 @@ export async function POST(request: Request): Promise<Response> {
       livesRemaining: run.livesRemaining,
       audioUrl: `/api/runs/${run.id}/audio`,
       nextAudio,
+      youtubeVideoId: pick.youtubeVideoId ?? null,
+      hookStartMs: pick.hookStartMs ?? 0,
     });
   } catch (error) {
     return internalErrorJson("runs.start", error);

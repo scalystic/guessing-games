@@ -1,7 +1,7 @@
 import { SongsList, type SongsQuery, type SortKey, type StatusFilter } from "./songs-list";
 
 const STATUS_VALUES: StatusFilter[] = ["all", "active", "removed", "missing-clip"];
-const SORT_VALUES: SortKey[] = ["title", "artist", "popularity"];
+const SORT_VALUES: SortKey[] = ["title", "artist", "popularity", "newest"];
 
 /// This page only resolves the initial query from the URL and hands off to
 /// SongsList (a client component), which owns the actual data — fetched
@@ -21,7 +21,7 @@ export default async function SongsPage({
     status: STATUS_VALUES.includes(sp.status as StatusFilter)
       ? (sp.status as StatusFilter)
       : "all",
-    sort: SORT_VALUES.includes(sp.sort as SortKey) ? (sp.sort as SortKey) : "title",
+    sort: SORT_VALUES.includes(sp.sort as SortKey) ? (sp.sort as SortKey) : "newest",
     dir: sp.dir === "desc" ? "desc" : "asc",
     page: Number.isInteger(pageNum) && pageNum > 0 ? pageNum : 1,
   };

@@ -18,6 +18,7 @@ type Props = {
   fullAudioUrl: string | null;
   audioLoading: boolean;
   onNext: () => void;
+  nextLabel?: string;
   roundsSolved: number;
   bestStreak: number;
   roundHistory: RoundHistoryEntry[];
@@ -47,6 +48,7 @@ export function ResultPanel({
   fullAudioUrl,
   audioLoading,
   onNext,
+  nextLabel = "Next track",
   roundsSolved,
   bestStreak,
   roundHistory,
@@ -298,7 +300,7 @@ export function ResultPanel({
             autoFocus
             className="min-h-12 rounded-[7px] bg-(--signal) px-3 text-sm font-bold text-(--signal-ink) transition-colors duration-200 hover:bg-[#ffd071]"
           >
-            Next track
+            {nextLabel}
           </button>
         </div>
       </div>

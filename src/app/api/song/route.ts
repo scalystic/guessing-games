@@ -23,7 +23,7 @@ async function getSonglessGameId(): Promise<string | null> {
   return game?.id ?? null;
 }
 
-const SORTABLE_FIELDS = ["title", "artist", "popularity"] as const;
+const SORTABLE_FIELDS = ["title", "artist", "popularity", "newest"] as const;
 type SortField = (typeof SORTABLE_FIELDS)[number];
 
 const PAGE_SIZE = 10;
@@ -91,7 +91,9 @@ export async function GET(request: Request): Promise<Response> {
             ? { artist: dir }
             : sort === "popularity"
               ? { puzzle: { popularity: dir } }
-              : { title: dir },
+              : sort === "newest"
+                ? { createdAt: "desc" }
+                : { title: dir },
         skip: (page - 1) * PAGE_SIZE,
         take: PAGE_SIZE,
       }),
@@ -111,6 +113,10 @@ export async function GET(request: Request): Promise<Response> {
       popularity: song.puzzle.popularity,
       isActive: song.puzzle.isActive,
       isBlocked: song.puzzle.isBlocked,
+      externalId: song.externalId,
+      hookStartMs: song.hookStartMs ?? 0,
+      hookStartAutoDetected: song.hookStartAutoDetected ?? false,
+      createdAt: song.createdAt ? song.createdAt.toISOString() : null,
     })),
     counts: {
       total: totalCount,

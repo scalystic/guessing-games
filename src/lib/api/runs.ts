@@ -40,8 +40,11 @@ export type StartedRun = {
   attemptsRemaining: number;
   livesRemaining: number;
   audioUrl: string;
-  /// Stage 1, so starting a run is one request rather than two.
+  /// Stage 1, so starting a run is one request rather than two. Null for YouTube songs.
   nextAudio: InlineAudio | null;
+  /// YouTube video ID when this round streams from YouTube instead of stored audio.
+  youtubeVideoId: string | null;
+  hookStartMs: number;
 };
 
 export type RoundHint = {
@@ -72,10 +75,10 @@ export type AttemptResult = {
   attemptsUsed: number;
   attemptsRemaining: number;
   nextAudioUrl: string | null;
-  /// The bytes `nextAudioUrl` would return, sent along to save a round trip.
-  /// Null when there is no next stage, or when the server declined to inline it —
-  /// in which case the client falls back to fetching `nextAudioUrl`.
   nextAudio: InlineAudio | null;
+  /// YouTube video ID for current round (PENDING) or next round (SOLVED/FAILED).
+  youtubeVideoId: string | null;
+  hookStartMs: number;
   livesRemaining: number;
   runStatus: RunStatus;
   roundIndex: number;
@@ -126,6 +129,8 @@ export type RunState = {
       song: { title: string; artist: string } | null;
     }[];
     hint: RoundHint | null;
+    youtubeVideoId: string | null;
+    hookStartMs: number;
   } | null;
   past: {
     roundIndex: number;

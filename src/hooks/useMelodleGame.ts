@@ -71,6 +71,7 @@ export type GameConfig = {
   gameSlug: string;
   revealLadder: number[];
   maxAttempts: number;
+  mode?: "PRACTICE" | "DAILY";
 };
 
 /// `selecting` is the pre-game era picker — shown whenever there's no run to
@@ -80,7 +81,7 @@ export type GameConfig = {
 export type GamePhase = "selecting" | "starting" | "ready" | "error";
 export type PendingAction = "guess" | "skip" | "giveup" | null;
 
-export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConfig) {
+export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PRACTICE" }: GameConfig) {
   const [phase, setPhase] = useState<GamePhase>("starting");
   const [error, setError] = useState<string | null>(null);
 
@@ -120,6 +121,12 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioLoading, setAudioLoading] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+
+  // YouTube streaming state for the current round.
+  const [youtubeVideoId, setYoutubeVideoId] = useState<string | null>(null);
+  const [hookStartMs, setHookStartMs] = useState(0);
+  /// Next round's YouTube info, saved when a round resolves (same as nextRoundAudioRef).
+  const nextRoundYoutubeRef = useRef<{ videoId: string | null; hookStartMs: number } | null>(null);
 
   /// The whole clip for the round that just resolved — what the result panel
   /// plays back. Kept apart from `audioUrl`, which still holds only the prefix
@@ -293,7 +300,7 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
     setBestStreak(0);
 
     try {
-      const started = await startRun(gameSlug, "PRACTICE", nextEra);
+      const started = await startRun(gameSlug, mode, mode === "DAILY" ? null : nextEra);
       if (generation !== generationRef.current) return;
 
       tokenRef.current = started.runToken;
@@ -309,12 +316,13 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
       setRoundIndex(started.roundIndex);
       setStage(started.stageReached);
       setLives(started.livesRemaining);
+      setYoutubeVideoId(started.youtubeVideoId);
+      setHookStartMs(started.hookStartMs);
       setPhase("ready");
 
-      // Stage 1 came back with the run. Only fall back to a second request if
-      // the server declined to inline it.
+      // YouTube songs stream directly — no audio bytes to fetch.
       if (started.nextAudio) playInlineAudio(started.nextAudio, generation);
-      else await loadAudio(started.runId, generation);
+      else if (!started.youtubeVideoId) await loadAudio(started.runId, generation);
     } catch (cause) {
       if (generation !== generationRef.current) return;
       setPhase("error");
@@ -325,16 +333,19 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
         ),
       );
     }
-  }, [gameSlug, era, loadAudio, playInlineAudio, releaseAudio, resetRoundView]);
+  }, [gameSlug, mode, era, loadAudio, playInlineAudio, releaseAudio, resetRoundView]);
 
-  /// Always land on the era picker first. A saved run from a previous visit
-  /// is intentionally NOT auto-resumed here — the picker is the one gate every
-  /// session goes through, so it can't be silently skipped by a leftover
-  /// localStorage entry. Runs once on mount.
+  /// PRACTICE lands on the era picker; DAILY starts immediately (no era choice).
+  /// Runs once on mount.
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
-    setPhase("selecting");
+    if (mode === "DAILY") {
+      void begin();
+    } else {
+      setPhase("selecting");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /// Fold an attempt response into local state.
@@ -367,15 +378,21 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
       if (result.rankName !== undefined) setRankName(result.rankName);
       if (result.achievements !== undefined) setAchievements(result.achievements);
 
-      if (result.outcome === "PENDING") return;
+      if (result.outcome === "PENDING") {
+        // Keep YouTube state in sync for ongoing rounds.
+        setYoutubeVideoId(result.youtubeVideoId);
+        setHookStartMs(result.hookStartMs);
+        return;
+      }
 
       // Round resolved. The server has already opened the next one (or finished
       // the run); the result panel is what the player sees until they advance.
-      //
-      // Its stage 1 came back in this very response, so hold on to it for
-      // nextRound() instead of throwing it away and re-fetching later.
       nextRoundAudioRef.current =
         result.runStatus === "IN_PROGRESS" ? result.nextAudio : null;
+      nextRoundYoutubeRef.current =
+        result.runStatus === "IN_PROGRESS"
+          ? { videoId: result.youtubeVideoId, hookStartMs: result.hookStartMs }
+          : null;
 
       setStatus(result.outcome);
       setReveal(result.reveal);
@@ -436,17 +453,14 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
       });
 
       if (result.outcome === "PENDING") {
-        // The bytes for the stage this attempt just unlocked arrived with the
-        // response; only fall back to a fetch if the server declined to inline.
+        // YouTube rounds stream directly — no bytes to fetch.
         if (result.nextAudio) playInlineAudio(result.nextAudio, generation);
-        else await loadAudio(id, generation);
+        else if (!result.youtubeVideoId) await loadAudio(id, generation);
         return;
       }
 
-      // Best-effort and deliberately not awaited by the caller's critical path:
-      // the result panel is already on screen with the answer, and the full clip
-      // is a play button on a round that is over.
-      await loadRevealAudio(id, generation);
+      // Best-effort reveal audio for stored songs only.
+      if (!result.youtubeVideoId) await loadRevealAudio(id, generation);
     },
     [applyResult, playInlineAudio, loadAudio, loadRevealAudio],
   );
@@ -569,9 +583,10 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
   }, [runId, pendingAction, status, applyResult, loadRevealAudio]);
 
   /// Move to the round the server already opened when this one resolved. If the
-  /// run itself finished, this starts a new one.
+  /// run itself finished, start a new one (PRACTICE) or stay on the results (DAILY).
   const nextRound = useCallback(async () => {
     if (runStatus !== "IN_PROGRESS") {
+      if (mode === "DAILY") return; // daily runs don't loop — show the final result
       await begin();
       return;
     }
@@ -585,13 +600,18 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
     releaseAudio();
     setAudioUrl(null);
 
-    // Stage 1 of this round was delivered with the attempt that resolved the
-    // last one, so advancing costs no request at all.
+    // Apply next round's YouTube info before loading audio.
+    const nextYoutube = nextRoundYoutubeRef.current;
+    nextRoundYoutubeRef.current = null;
+    setYoutubeVideoId(nextYoutube?.videoId ?? null);
+    setHookStartMs(nextYoutube?.hookStartMs ?? 0);
+
+    // Stage 1 of this round was delivered with the attempt that resolved the last one.
     const inline = nextRoundAudioRef.current;
     nextRoundAudioRef.current = null;
     if (inline) playInlineAudio(inline, generation);
-    else await loadAudio(id, generation);
-  }, [runStatus, runId, begin, resetRoundView, releaseAudio, loadAudio, playInlineAudio]);
+    else if (!nextYoutube?.videoId) await loadAudio(id, generation);
+  }, [mode, runStatus, runId, begin, resetRoundView, releaseAudio, loadAudio, playInlineAudio]);
 
   const restartRun = useCallback(() => {
     void begin();
@@ -650,6 +670,8 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts }: GameConf
     audioLoading,
     revealAudioUrl,
     revealAudioLoading,
+    youtubeVideoId,
+    hookStartMs,
     pending: pendingAction !== null,
     pendingAction,
 

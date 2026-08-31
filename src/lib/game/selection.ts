@@ -4,10 +4,6 @@ import { decadeClause, type DecadeFilter } from "@/lib/game/decade-filter";
 
 export type { DecadeFilter };
 
-/// Puzzle selection. Difficulty ramps WITHIN a run: round 1 targets the top of
-/// the catalog and each later round slides toward obscurity. There are no
-/// difficulty tiers — see docs/game-engine.md § Puzzle selection.
-
 export type SelectionCurve = {
   startPopularity: number;
   rampPerRound: number;
@@ -15,16 +11,11 @@ export type SelectionCurve = {
   sampleWindow: number;
 };
 
-/// Where round N should sit on the 0-100 popularity axis. Seeded at 90 / -3.5 /
-/// floor 20, a 10-round day walks 90 → 58.5.
 export function targetPopularity(curve: SelectionCurve, roundIndex: number): number {
   const raw = curve.startPopularity - curve.rampPerRound * (roundIndex - 1);
   return Math.min(100, Math.max(curve.minPopularity, raw));
 }
 
-/// Progressive widening. If the catalog is thin at a percentile, a fixed window
-/// would fail the round outright; each retry doubles the window and the last
-/// ignores it entirely so a run can always continue.
 const WINDOW_MULTIPLIERS = [1, 2, 4, Number.POSITIVE_INFINITY];
 
 export type SampleArgs = {
@@ -33,12 +24,8 @@ export type SampleArgs = {
   roundIndex: number;
   curve: SelectionCurve;
   maxAttempts: number;
-  /// Rounds without a repeat for the same player.
   cooldownDays: number;
-  /// Puzzles already used in this run. @@unique([runId, puzzleId]) is the hard
-  /// stop, but excluding them here avoids burning a retry on a guaranteed clash.
   excludePuzzleIds: string[];
-  /// Player-chosen era category. Null/undefined = every era.
   decadeFilter?: DecadeFilter | null;
 };
 
@@ -46,36 +33,30 @@ export type SampledPuzzle = {
   puzzleId: string;
   popularity: number;
   targetPopularity: number;
-  /// The clip backing this puzzle. Returned because the query already joins
-  /// PuzzleAsset to decide playability, so the caller can inline stage-1 audio
-  /// without a second read.
+  /// Null for YouTube-streamed songs (no stored clip). Non-null for stored songs.
   asset: {
     storageKey: string;
     stageByteOffsets: number[];
     byteSize: number | null;
     ladderRevision: number;
-  };
+  } | null;
+  /// Set for YouTube-streamed songs. Null for stored songs.
+  youtubeVideoId: string | null;
+  /// Millisecond offset into the YouTube video where the hook starts.
+  hookStartMs: number;
 };
 
 type Row = {
   id: string;
   popularity: number;
-  storageKey: string;
-  stageByteOffsets: number[];
+  storageKey: string | null;
+  stageByteOffsets: number[] | null;
   byteSize: number | null;
-  ladderRevision: number;
+  ladderRevision: number | null;
+  external_id: string | null;
+  hook_start_ms: number;
 };
 
-/// Pick one playable puzzle near the round's target popularity.
-///
-/// "Playable" is doing real work here: a puzzle with no AUDIO_CLIP, or one whose
-/// stageByteOffsets don't cover every stage, would hand the player a round that
-/// 404s partway up the ladder. Those are filtered in SQL rather than discovered
-/// at serve time.
-/// Anything that can run a tagged-template raw query — `prisma` or a transaction
-/// client. Callers inside a transaction MUST pass their `tx`: a transaction holds
-/// one connection, and reaching for the global client here would run the pick on
-/// a second connection, outside the row lock the caller is relying on.
 type RawExecutor = Pick<typeof prisma, "$queryRaw">;
 
 export async function samplePuzzle(
@@ -87,10 +68,6 @@ export async function samplePuzzle(
 
   for (const multiplier of WINDOW_MULTIPLIERS) {
     const window = args.curve.sampleWindow * multiplier;
-    // Puzzle.popularity is an integer column but rampPerRound is a float, so a
-    // target like 86.5 yields fractional bounds that Postgres rejects outright.
-    // Floor/ceil rather than round, so rounding always widens the window and
-    // never quietly narrows it below what sampleWindow configured.
     const low = Number.isFinite(window) ? Math.max(0, Math.floor(target - window)) : 0;
     const high = Number.isFinite(window) ? Math.min(100, Math.ceil(target + window)) : 100;
 
@@ -101,9 +78,12 @@ export async function samplePuzzle(
         a."storageKey"       AS "storageKey",
         a."stageByteOffsets" AS "stageByteOffsets",
         a."byteSize"         AS "byteSize",
-        a."ladderRevision"   AS "ladderRevision"
+        a."ladderRevision"   AS "ladderRevision",
+        s."externalId"       AS external_id,
+        COALESCE(s."hookStartMs", 0) AS hook_start_ms
       FROM "Puzzle" p
-      JOIN "PuzzleAsset" a
+      -- LEFT JOIN: YouTube songs have no AUDIO_CLIP asset
+      LEFT JOIN "PuzzleAsset" a
         ON a."puzzleId" = p.id
        AND a.kind = 'AUDIO_CLIP'::"AssetKind"
       LEFT JOIN "Song" s
@@ -112,7 +92,11 @@ export async function samplePuzzle(
         AND p."isActive" = true
         AND p."isBlocked" = false
         AND p.popularity BETWEEN ${low} AND ${high}
-        AND coalesce(array_length(a."stageByteOffsets", 1), 0) >= ${args.maxAttempts}
+        -- Playable = has stored audio with enough stages, OR is a YouTube song
+        AND (
+          (a."storageKey" IS NOT NULL AND coalesce(array_length(a."stageByteOffsets", 1), 0) >= ${args.maxAttempts})
+          OR (s."externalId" IS NOT NULL AND a."storageKey" IS NULL)
+        )
         AND p.id <> ALL(${args.excludePuzzleIds}::text[])
         ${decadeClause(args.decadeFilter)}
         AND NOT EXISTS (
@@ -128,8 +112,6 @@ export async function samplePuzzle(
     const row = rows[0];
     if (row) {
       if (multiplier !== 1) {
-        // Not an error, but it IS the signal that the catalog is too thin at this
-        // percentile. Worth seeing in logs before players notice repeats.
         const widening = Number.isFinite(multiplier)
           ? `${multiplier}x window`
           : "the whole catalog";
@@ -142,12 +124,16 @@ export async function samplePuzzle(
         puzzleId: row.id,
         popularity: row.popularity,
         targetPopularity: Math.round(target),
-        asset: {
-          storageKey: row.storageKey,
-          stageByteOffsets: row.stageByteOffsets,
-          byteSize: row.byteSize,
-          ladderRevision: row.ladderRevision,
-        },
+        asset: row.storageKey
+          ? {
+              storageKey: row.storageKey,
+              stageByteOffsets: row.stageByteOffsets ?? [],
+              byteSize: row.byteSize,
+              ladderRevision: row.ladderRevision ?? 1,
+            }
+          : null,
+        youtubeVideoId: row.external_id ?? null,
+        hookStartMs: row.hook_start_ms,
       };
     }
   }

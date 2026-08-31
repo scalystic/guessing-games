@@ -13,6 +13,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/admin", label: "Dashboard", icon: "🏠" },
   { href: "/admin/songs", label: "Manage Song", icon: "🎵" },
   { href: "/admin/users", label: "Manage User", icon: "👥" },
+  { href: "/admin/daily-challenges", label: "Daily Challenges", icon: "📅" },
 ];
 
 // A persistent column, unlike the player-facing src/components/Sidebar.tsx

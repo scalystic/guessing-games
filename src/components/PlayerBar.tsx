@@ -3,16 +3,47 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { waveformBars } from "@/lib/cover";
 
+// Minimal type definitions for the YouTube IFrame Player API.
+type YTPlayerInstance = {
+  seekTo: (seconds: number, allowSeekAhead: boolean) => void;
+  playVideo: () => void;
+  pauseVideo: () => void;
+  loadVideoById: (options: { videoId: string; startSeconds?: number }) => void;
+  cueVideoById: (options: { videoId: string; startSeconds?: number }) => void;
+  destroy: () => void;
+  getPlayerState: () => number;
+};
+
+declare global {
+  interface Window {
+    YT?: {
+      Player: new (
+        element: HTMLElement,
+        options: {
+          videoId: string;
+          playerVars?: Record<string, number | string>;
+          events?: {
+            onReady?: () => void;
+            onStateChange?: (event: { data: number }) => void;
+          };
+        },
+      ) => YTPlayerInstance;
+    };
+    onYouTubeIframeAPIReady?: () => void;
+  }
+}
+
 type Props = {
   audioUrl: string | null;
+  /// When set, play from YouTube instead of a stored audio clip.
+  youtubeVideoId?: string | null;
+  /// Millisecond offset in the YouTube video where the hook starts.
+  hookStartMs?: number;
   revealMs: number;
   totalMs: number;
   ladder: number[];
   loading: boolean;
   waveformSeed: string;
-  /// When set, the play button calls this instead of playing a clip, and is
-  /// never disabled for lack of one — the pre-round state, before an era has
-  /// been picked and there's anything loaded to play.
   onPlayRequested?: () => void;
   promptTitle?: string;
   promptSubtitle?: string;
@@ -27,8 +58,34 @@ function formatDuration(ms: number) {
   return `${value} sec`;
 }
 
+// Load YouTube IFrame API once globally.
+let ytApiLoaded = false;
+let ytApiReady = false;
+const ytReadyCallbacks: (() => void)[] = [];
+
+function loadYouTubeAPI(onReady: () => void): void {
+  if (ytApiReady) { onReady(); return; }
+  ytReadyCallbacks.push(onReady);
+  if (ytApiLoaded) return;
+  ytApiLoaded = true;
+
+  const prev = window.onYouTubeIframeAPIReady;
+  window.onYouTubeIframeAPIReady = () => {
+    prev?.();
+    ytApiReady = true;
+    for (const cb of ytReadyCallbacks) cb();
+    ytReadyCallbacks.length = 0;
+  };
+
+  const tag = document.createElement("script");
+  tag.src = "https://www.youtube.com/iframe_api";
+  document.head.appendChild(tag);
+}
+
 export function PlayerBar({
   audioUrl,
+  youtubeVideoId,
+  hookStartMs = 0,
   revealMs,
   totalMs,
   ladder,
@@ -38,66 +95,123 @@ export function PlayerBar({
   promptTitle,
   promptSubtitle,
 }: Props) {
+  // Stored-audio refs
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const fadeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rafRef = useRef<number | null>(null);
   const playStartRef = useRef(0);
+
+  // YouTube refs
+  const ytContainerRef = useRef<HTMLDivElement | null>(null);
+  const ytPlayerRef = useRef<YTPlayerInstance | null>(null);
+  const ytReadyRef = useRef(false);
+  const ytTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ytVideoIdRef = useRef<string | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [progressMs, setProgressMs] = useState(0);
   const [vuLevels, setVuLevels] = useState([0, 0]);
 
   useEffect(() => {
-    if (!isPlaying) {
-      return;
-    }
-
+    if (!isPlaying) return;
     const interval = setInterval(() => {
-      setVuLevels([
-        Math.floor(Math.random() * 8) + 1,
-        Math.floor(Math.random() * 8) + 1,
-      ]);
+      setVuLevels([Math.floor(Math.random() * 8) + 1, Math.floor(Math.random() * 8) + 1]);
     }, 100);
-
-    return () => {
-      clearInterval(interval);
-      setVuLevels([0, 0]);
-    };
+    return () => { clearInterval(interval); setVuLevels([0, 0]); };
   }, [isPlaying]);
 
+  // Stored-audio element lifecycle
   useEffect(() => {
-    if (!audioUrl) {
-      audioRef.current = null;
-      return;
-    }
-
+    if (!audioUrl) { audioRef.current = null; return; }
     const audio = new Audio(audioUrl);
     audio.preload = "auto";
     audioRef.current = audio;
-
-    return () => {
-      audio.pause();
-      audioRef.current = null;
-    };
+    return () => { audio.pause(); audioRef.current = null; };
   }, [audioUrl]);
+
+  // YouTube player lifecycle — create/reuse player when youtubeVideoId changes
+  useEffect(() => {
+    if (!youtubeVideoId) return;
+
+    let cancelled = false;
+
+    loadYouTubeAPI(() => {
+      if (cancelled || !ytContainerRef.current || !window.YT) return;
+
+      if (ytPlayerRef.current && ytVideoIdRef.current === youtubeVideoId) {
+        // Same video, player already created — nothing to do.
+        return;
+      }
+
+      if (ytPlayerRef.current && ytVideoIdRef.current !== youtubeVideoId) {
+        // Different video — cue it into the existing player WITHOUT auto-playing.
+        ytVideoIdRef.current = youtubeVideoId;
+        ytReadyRef.current = false;
+        ytPlayerRef.current.pauseVideo();
+        ytPlayerRef.current.cueVideoById({ videoId: youtubeVideoId, startSeconds: hookStartMs / 1000 });
+        ytReadyRef.current = true;
+        return;
+      }
+
+      // First time — create the player.
+      ytVideoIdRef.current = youtubeVideoId;
+      ytReadyRef.current = false;
+      ytPlayerRef.current = new window.YT.Player(ytContainerRef.current, {
+        videoId: youtubeVideoId,
+        playerVars: {
+          autoplay: 0,
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
+          modestbranding: 1,
+          rel: 0,
+          iv_load_policy: 3,
+          playsinline: 1,
+        },
+        events: {
+          onReady: () => { ytReadyRef.current = true; },
+        },
+      });
+    });
+
+    return () => { cancelled = true; };
+  }, [youtubeVideoId, hookStartMs]);
+
+  // Destroy YouTube player on unmount
+  useEffect(() => {
+    return () => {
+      if (ytTimerRef.current) clearTimeout(ytTimerRef.current);
+      if (ytPlayerRef.current) { ytPlayerRef.current.destroy(); ytPlayerRef.current = null; }
+    };
+  }, []);
 
   function stopPlayback() {
     const audio = audioRef.current;
-    if (audio) {
-      audio.pause();
-      audio.volume = 1;
-    }
+    if (audio) { audio.pause(); audio.volume = 1; }
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     if (fadeTimeoutRef.current) clearTimeout(fadeTimeoutRef.current);
     rafRef.current = null;
     fadeTimeoutRef.current = null;
   }
 
+  function stopYoutubePlayback() {
+    if (ytTimerRef.current) clearTimeout(ytTimerRef.current);
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    ytTimerRef.current = null;
+    rafRef.current = null;
+  }
+
   useEffect(() => stopPlayback, []);
 
+  useEffect(() => { stopPlayback(); }, [audioUrl]);
+
   useEffect(() => {
-    stopPlayback();
-  }, [audioUrl]);
+    stopYoutubePlayback();
+    ytPlayerRef.current?.pauseVideo();
+    if (isPlaying) setIsPlaying(false);
+    if (progressMs !== 0) setProgressMs(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [youtubeVideoId]);
 
   const [lastUrl, setLastUrl] = useState(audioUrl);
   if (lastUrl !== audioUrl) {
@@ -148,12 +262,58 @@ export function PlayerBar({
     setIsPlaying(false);
   }
 
+  function handleYoutubePlay() {
+    const player = ytPlayerRef.current;
+    if (!player || !ytReadyRef.current) return;
+
+    stopYoutubePlayback();
+
+    player.seekTo(hookStartMs / 1000, true);
+    player.playVideo();
+    playStartRef.current = performance.now();
+    setIsPlaying(true);
+    setProgressMs(0);
+    rafRef.current = requestAnimationFrame(tick);
+
+    ytTimerRef.current = setTimeout(() => {
+      player.pauseVideo();
+      setIsPlaying(false);
+      if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+      setProgressMs(revealMs);
+    }, revealMs);
+  }
+
+  function handleYoutubeStop() {
+    stopYoutubePlayback();
+    ytPlayerRef.current?.pauseVideo();
+    setIsPlaying(false);
+  }
+
+  const isYoutube = Boolean(youtubeVideoId);
   const playedPct = totalMs > 0 ? Math.min(100, (progressMs / totalMs) * 100) : 0;
   const bars = useMemo(() => waveformBars(waveformSeed, BAR_COUNT), [waveformSeed]);
-  const disabled = onPlayRequested ? loading : loading || !audioUrl;
+
+  const disabled = onPlayRequested
+    ? loading
+    : loading || (!audioUrl && !isYoutube);
+
+  const playHandler = onPlayRequested
+    ?? (isYoutube
+      ? (isPlaying ? handleYoutubeStop : handleYoutubePlay)
+      : (isPlaying ? handleStop : handlePlay));
 
   return (
     <section className="signal-deck rounded-[18px] p-4 text-[#f2e9d8] sm:p-6" aria-label="Mystery audio deck">
+      {/* Hidden YouTube iframe — must be in the DOM for the IFrame API to attach */}
+      {isYoutube && (
+        <div
+          aria-hidden="true"
+          style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", opacity: 0, pointerEvents: "none" }}
+        >
+          <div ref={ytContainerRef} />
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-4 border-b border-[#343b51] pb-4">
         <div>
           <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-[#8e93a3]">
@@ -178,33 +338,19 @@ export function PlayerBar({
       </div>
 
       <div className="relative mt-5 p-4 rounded-[12px] bg-[#10131e] border border-[#2d3447] shadow-inner overflow-hidden">
-        {/* Cassette Shell Label body */}
         <div className="absolute inset-2 bg-gradient-to-b from-[#2c3347] to-[#1a1e2b] rounded-[8px] border border-[#3e4761] shadow-md z-0 opacity-90" />
-        
-        {/* Cassette Label Stripe (Cream/Gold/Blue horizontal stripes) */}
         <div className="absolute top-1/2 -translate-y-1/2 left-2 right-2 h-10 bg-gradient-to-r from-[#d99d2f]/10 via-[#3a7ad5]/15 to-[#d99d2f]/10 border-t border-b border-[#3e4761]/30 z-0 pointer-events-none" />
-
-        {/* Clear center viewport window */}
         <div className="relative z-10 grid grid-cols-[42px_1fr_42px] items-center gap-3 rounded-[6px] bg-[#07090f] border border-[#1b1f2d] shadow-[inset_0_2px_8px_rgba(0,0,0,0.8)] px-3 py-4 sm:grid-cols-[56px_1fr_56px] sm:gap-5 sm:px-5 overflow-hidden">
-          {/* Glass reflection overlay */}
           <div className="absolute inset-0 pointer-events-none bg-gradient-to-tr from-transparent via-white/[0.015] to-white/[0.05] z-20" />
-
-          {/* 4 Corner Screws */}
           <div className="absolute top-1 left-1 w-1 h-1 rounded-full bg-[#11141c] border border-[#252b3b]" />
           <div className="absolute top-1 right-1 w-1 h-1 rounded-full bg-[#11141c] border border-[#252b3b]" />
           <div className="absolute bottom-1 left-1 w-1 h-1 rounded-full bg-[#11141c] border border-[#252b3b]" />
           <div className="absolute bottom-1 right-1 w-1 h-1 rounded-full bg-[#11141c] border border-[#252b3b]" />
-
-          {/* Cassette Tape Film background line */}
           <div className="absolute bottom-1.5 left-6 right-6 h-[4px] bg-[#22170d] border-t border-[#3d2c1c] opacity-90 z-0" />
-
-          {/* Cassette Label Text */}
           <div className="absolute top-1 left-1/2 -translate-x-1/2 font-mono text-[7px] tracking-[0.25em] text-[#5b647d] uppercase select-none pointer-events-none z-10">
             SARGAM CH-1 • C90
           </div>
-
           <span className="cassette-reel relative aspect-square rounded-full z-10" data-playing={isPlaying} aria-hidden="true" />
-
           <div className="relative flex h-10 items-center gap-0.5 overflow-hidden z-10" aria-hidden="true">
             {bars.map((height, index) => {
               const barPct = (index / BAR_COUNT) * 100;
@@ -220,7 +366,6 @@ export function PlayerBar({
               );
             })}
           </div>
-
           <span className="cassette-reel relative aspect-square rounded-full z-10" data-playing={isPlaying} aria-hidden="true" />
         </div>
       </div>
@@ -228,10 +373,16 @@ export function PlayerBar({
       <div className="mt-5 flex items-center gap-4 border-t border-[#2d3447] pt-5">
         <button
           type="button"
-          onClick={onPlayRequested ?? (isPlaying ? handleStop : handlePlay)}
+          onClick={playHandler}
           disabled={disabled}
           className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-(--signal) text-(--signal-ink) transition-colors duration-200 hover:bg-[#ffd071] disabled:cursor-not-allowed disabled:opacity-45"
-          aria-label={onPlayRequested ? "Choose an era to start" : isPlaying ? "Stop the clip" : `Play the ${formatDuration(revealMs)} clip`}
+          aria-label={
+            onPlayRequested
+              ? "Choose an era to start"
+              : isPlaying
+                ? "Stop the clip"
+                : `Play the ${formatDuration(revealMs)} clip`
+          }
         >
           {loading ? (
             <svg width="20" height="20" viewBox="0 0 20 20" className="animate-spin" fill="none" aria-hidden="true">
@@ -263,13 +414,11 @@ export function PlayerBar({
           </p>
         </div>
 
-        {/* Dual LED VU Meter on the right */}
         <div className="flex flex-col gap-1 bg-[#0b0d14] p-2 rounded border border-[#242a3a] shadow-inner shrink-0 w-[110px]">
           <div className="flex items-center justify-between text-[6px] font-mono text-[#525a70] px-1 mb-0.5">
             <span>LEVEL METER</span>
             <span>VU</span>
           </div>
-          {/* L channel */}
           <div className="flex items-center gap-[2px]">
             <span className="text-[7px] font-mono text-[#525a70] w-2.5">L</span>
             {Array.from({ length: 8 }).map((_, i) => {
@@ -283,7 +432,6 @@ export function PlayerBar({
               return <span key={i} className={`h-1 w-[7px] rounded-[1px] transition-all duration-75 ${color}`} />;
             })}
           </div>
-          {/* R channel */}
           <div className="flex items-center gap-[2px]">
             <span className="text-[7px] font-mono text-[#525a70] w-2.5">R</span>
             {Array.from({ length: 8 }).map((_, i) => {

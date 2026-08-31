@@ -42,9 +42,6 @@ type CurrentRound = {
   stageReached: number;
   attemptsUsed: number;
   attemptsRemaining: number;
-  /// One entry per attempt already spent at this round, oldest first. `song` is
-  /// what the player named — null for a skip, and null for a guess whose puzzle
-  /// has since been pulled from the catalog.
   attempts: {
     attemptIndex: number;
     isSkip: boolean;
@@ -52,6 +49,8 @@ type CurrentRound = {
     song: { title: string; artist: string } | null;
   }[];
   hint: RoundHint | null;
+  youtubeVideoId: string | null;
+  hookStartMs: number;
 };
 
 export async function GET(
@@ -121,6 +120,8 @@ export async function GET(
                 releaseYear: true,
                 decade: true,
                 genres: true,
+                externalId: true,
+                hookStartMs: true,
               },
             },
             // Only the current round's asset is used, but selecting it here is
@@ -194,6 +195,8 @@ export async function GET(
           hint: currentRound.puzzle.song
             ? deriveHint(currentRound.puzzle.song, currentRound.attemptsUsed)
             : null,
+          youtubeVideoId: currentRound.puzzle.song?.externalId ?? null,
+          hookStartMs: currentRound.puzzle.song?.hookStartMs ?? 0,
         }
       : null;
 

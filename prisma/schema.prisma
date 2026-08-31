@@ -305,6 +305,8 @@ model Song {
   /// stage 1 lands on the hook rather than silence.
   hookStartMs Int  @default(0)
 
+  hookStartAutoDetected Boolean @default(false)
+
   isrc       String?
   externalId String?
 
@@ -319,9 +321,12 @@ model Song {
   /// Normalized title+artist for trigram search. Populated at ingest.
   searchText String?
 
+  createdAt  DateTime @default(now())
+
   puzzle Puzzle @relation(fields: [puzzleId], references: [id], onDelete: Cascade)
 
   @@index([artist])
+  @@index([createdAt])
   /// Backs the era filter in puzzle selection (src/lib/game/selection.ts).
   @@index([decade])
   /// Trigram GIN, not btree — the typeahead matches on substrings and
@@ -345,6 +350,9 @@ model DailyChallenge {
   /// Calendar day in the platform's fixed daily timezone. "2026-08-19".
   dayKey String
   seed   String
+  title       String?
+  rewardCoins Int     @default(0)
+  rewardXp    Int     @default(0)
   /// Frozen copy of Game.dailyRounds — 10 today, and retuning it later must not
   /// change how many rounds an already-published day has.
   roundCount Int

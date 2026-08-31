@@ -96,13 +96,16 @@ export async function GET(
       FROM "Song" s
       JOIN "Puzzle" p
         ON p.id = s."puzzleId"
-      JOIN "PuzzleAsset" a
+      LEFT JOIN "PuzzleAsset" a
         ON a."puzzleId" = p.id
        AND a.kind = 'AUDIO_CLIP'::"AssetKind"
       WHERE p."gameId" = ${game.id}
         AND p."isActive" = true
         AND p."isBlocked" = false
-        AND coalesce(array_length(a."stageByteOffsets", 1), 0) >= ${game.maxAttempts}
+        AND (
+          s."externalId" IS NOT NULL
+          OR coalesce(array_length(a."stageByteOffsets", 1), 0) >= ${game.maxAttempts}
+        )
         AND (
           s."searchText" LIKE ${`%${query}%`}
           OR ${query} <% s."searchText"

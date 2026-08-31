@@ -41,6 +41,15 @@ function HelpIcon() {
   );
 }
 
+function ChallengeIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <rect x="3" y="4" width="14" height="13" rx="2" />
+      <path d="M7 2v4M13 2v4M3 9h14" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function StreakIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -260,11 +269,156 @@ function HeaderAction({ label, icon, onClick }: HeaderActionProps) {
   );
 }
 
+type TodayChallenge = {
+  id: string;
+  title: string | null;
+  dayKey: string;
+  roundCount: number;
+  rewardCoins: number;
+  rewardXp: number;
+  alreadyPlayed: boolean;
+  runStatus: string | null;
+};
+
+function TodaysChallengeModal({
+  gameSlug,
+  onClose,
+}: {
+  gameSlug: string;
+  onClose: () => void;
+}) {
+  const [challenge, setChallenge] = useState<TodayChallenge | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/daily-challenge/today?gameSlug=${encodeURIComponent(gameSlug)}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.data) setChallenge(json.data);
+        else setError(json.error?.message ?? "No challenge today.");
+      })
+      .catch(() => setError("Could not load today's challenge."))
+      .finally(() => setLoading(false));
+  }, [gameSlug]);
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  function formatDay(dayKey: string) {
+    const [y, m, d] = dayKey.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-(--scrim) p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="challenge-modal-title"
+    >
+      <div
+        className="w-full max-w-sm rounded-[14px] border border-(--hairline) bg-(--surface-strong) p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <p className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-(--signal)">
+              Daily Challenge
+            </p>
+            <h2
+              id="challenge-modal-title"
+              className="mt-1 font-[family-name:var(--font-display)] text-2xl font-semibold leading-tight text-(--text)"
+            >
+              {loading ? "Loading…" : (challenge?.title ?? "Today's Challenge")}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 rounded-lg p-1.5 text-(--text-faint) hover:bg-(--surface-hover) hover:text-(--text)"
+            aria-label="Close"
+          >
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M5 5l10 10M15 5L5 15" />
+            </svg>
+          </button>
+        </div>
+
+        {loading && (
+          <p className="py-6 text-center text-sm text-(--text-faint)">Loading…</p>
+        )}
+
+        {!loading && error && (
+          <p className="py-4 text-center text-sm text-(--text-dim)">{error}</p>
+        )}
+
+        {!loading && challenge && (
+          <>
+            <p className="mb-4 text-xs text-(--text-faint)">{formatDay(challenge.dayKey)}</p>
+
+            <div className="mb-5 grid grid-cols-2 gap-2">
+              <div className="rounded-xl border border-(--hairline) bg-(--surface) px-3 py-2.5 text-center">
+                <p className="text-xl font-bold text-(--text)">{challenge.roundCount}</p>
+                <p className="mt-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-(--text-faint)">Rounds</p>
+              </div>
+              <div className="rounded-xl border border-(--hairline) bg-(--surface) px-3 py-2.5 text-center">
+                {challenge.rewardCoins > 0 || challenge.rewardXp > 0 ? (
+                  <>
+                    {challenge.rewardCoins > 0 && (
+                      <p className="text-sm font-bold text-amber-500">{challenge.rewardCoins} coins</p>
+                    )}
+                    {challenge.rewardXp > 0 && (
+                      <p className="text-sm font-bold text-violet-400">{challenge.rewardXp} XP</p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm font-bold text-(--text-faint)">—</p>
+                )}
+                <p className="mt-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-(--text-faint)">Rewards</p>
+              </div>
+            </div>
+
+            {challenge.alreadyPlayed ? (
+              <div className="rounded-xl border border-(--hairline) bg-(--surface) px-4 py-3 text-center">
+                <p className="text-sm font-semibold text-(--text-dim)">
+                  {challenge.runStatus === "COMPLETED"
+                    ? "You already completed today's challenge!"
+                    : "You already started today's challenge."}
+                </p>
+              </div>
+            ) : (
+              <Link
+                href="/play/daily"
+                onClick={onClose}
+                className="block w-full rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-4 py-3 text-center text-sm font-bold text-white shadow-sm transition hover:opacity-90"
+              >
+                Play Now
+              </Link>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Home({ user, game: config }: { user: CurrentUser; game: GameDetail }) {
   const [showHelp, setShowHelp] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showAuthGate, setShowAuthGate] = useState(false);
   const [showEraDialog, setShowEraDialog] = useState(false);
+  const [showChallenge, setShowChallenge] = useState(false);
   const game = useMelodleGame({
     gameSlug: config.slug,
     revealLadder: config.revealLadder,
@@ -331,6 +485,7 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
           </div>
 
           <nav className="flex shrink-0 items-center gap-2" aria-label="Game controls">
+            <HeaderAction label="Daily" icon={<ChallengeIcon />} onClick={() => setShowChallenge(true)} />
             <HeaderAction label="Stats" icon={<StatsIcon />} onClick={() => setShowStats(true)} />
             <HeaderAction label="How to play" icon={<HelpIcon />} onClick={() => setShowHelp(true)} />
             <MultiplayerEntry gameSlug={config.slug} tagline={config.tagline} revealLadder={config.revealLadder} maxAttempts={config.maxAttempts} />
@@ -394,6 +549,8 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
 
           <PlayerBar
             audioUrl={game.audioUrl}
+            youtubeVideoId={game.youtubeVideoId}
+            hookStartMs={game.hookStartMs}
             revealMs={game.revealMs}
             totalMs={game.totalMs}
             ladder={game.revealLadder}
@@ -528,6 +685,13 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
             game.setEra(era);
           }}
           onClose={() => setShowEraDialog(false)}
+        />
+      ) : null}
+
+      {showChallenge ? (
+        <TodaysChallengeModal
+          gameSlug={config.slug}
+          onClose={() => setShowChallenge(false)}
         />
       ) : null}
 

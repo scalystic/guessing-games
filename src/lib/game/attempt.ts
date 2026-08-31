@@ -108,6 +108,11 @@ export type AttemptResult = {
   /// stage, or when the asset is unservable — in which case the client falls
   /// back to the route, which reports the failure properly.
   nextAudio: InlineAudio | null;
+  /// YouTube video ID for the round currently in play (PENDING) or the next
+  /// round (SOLVED/FAILED). Null for stored-audio songs.
+  youtubeVideoId: string | null;
+  /// Millisecond offset in the YouTube video where the hook starts.
+  hookStartMs: number;
   livesRemaining: number;
   runStatus: "IN_PROGRESS" | "COMPLETED" | "ABANDONED" | "EXPIRED";
   roundIndex: number;
@@ -270,11 +275,11 @@ function pendingAudio(asset: AssetRow, stage: number): PendingAudio | null {
 /// would be a second copy of it, so the fast path simply declines and the client
 /// falls back to the route it already knows how to call.
 export async function inlineAudioFor(
-  asset: AssetRow,
+  asset: AssetRow | null,
   stage: number,
   gameLadderRevision: number,
 ): Promise<InlineAudio | null> {
-  if (!asset.storageKey || !asset.stageByteOffsets) return null;
+  if (!asset || !asset.storageKey || !asset.stageByteOffsets) return null;
   if (asset.ladderRevision !== gameLadderRevision) return null;
 
   const endExclusive = asset.stageByteOffsets[stage - 1];
@@ -322,6 +327,7 @@ type LockedRow = {
   player_id: string;
   game_id: string;
   multiplayer_room_id: string | null;
+  daily_challenge_id: string | null;
   max_attempts: number;
   reveal_ladder: unknown;
   ladder_revision: number;
@@ -363,6 +369,7 @@ async function lockAndRead(tx: Tx, runId: string): Promise<LockedRow> {
       r."playerId"            AS player_id,
       r."gameId"              AS game_id,
       r."multiplayerRoomId"   AS multiplayer_room_id,
+      r."dailyChallengeId"    AS daily_challenge_id,
       g."maxAttempts"         AS max_attempts,
       g."revealLadder"        AS reveal_ladder,
       g."ladderRevision"      AS ladder_revision,
@@ -423,6 +430,7 @@ type RunFacts = {
   gameId: string;
   mode: RunMode;
   multiplayerRoomId: string | null;
+  dailyChallengeId: string | null;
   livesRemaining: number;
   maxRounds: number | null;
   currentStreak: number;
@@ -478,6 +486,7 @@ function facts(row: LockedRow, runId: string): { run: RunFacts; round: RoundFact
       gameId: row.game_id,
       mode: row.mode as RunMode,
       multiplayerRoomId: row.multiplayer_room_id,
+      dailyChallengeId: row.daily_challenge_id,
       livesRemaining: row.lives_remaining,
       maxRounds: row.max_rounds,
       currentStreak: row.current_streak,
@@ -585,6 +594,8 @@ async function advanceLadder(
     release_year: number | null;
     decade: number | null;
     genres: string[] | null;
+    external_id: string | null;
+    hook_start_ms: number;
   };
 
   const rows = await tx.$queryRaw<Row[]>`
@@ -599,9 +610,6 @@ async function advanceLadder(
         ${input.guessedPuzzleId}, ${input.rawInput}, false, ${input.isSkip},
         ${input.idempotencyKey}, now()
       )
-      -- Untargeted on purpose: it covers BOTH the idempotencyKey unique and the
-      -- @@unique([roundId, attemptIndex]) backstop. Either collision means this
-      -- attempt slot is already spoken for, and neither may buy a free attempt.
       ON CONFLICT DO NOTHING
       RETURNING id
     ),
@@ -624,9 +632,9 @@ async function advanceLadder(
       s.title                              AS title,
       s."releaseYear"                      AS release_year,
       s.decade                             AS decade,
-      s.genres                             AS genres
-    -- The dummy row keeps the projection alive when the puzzle has no Song, so
-    -- the inserted count survives even for a puzzle that cannot be hinted.
+      s.genres                             AS genres,
+      s."externalId"                       AS external_id,
+      COALESCE(s."hookStartMs", 0)         AS hook_start_ms
     FROM (SELECT 1) d
     LEFT JOIN "Song" s ON s."puzzleId" = ${round.puzzleId}
   `;
@@ -659,6 +667,8 @@ async function advanceLadder(
       attemptsUsed,
       attemptsRemaining: run.maxAttempts - attemptsUsed,
       nextAudioUrl: `/api/runs/${run.id}/audio`,
+      youtubeVideoId: row.external_id ?? null,
+      hookStartMs: row.hook_start_ms,
       livesRemaining: run.livesRemaining,
       runStatus: "IN_PROGRESS",
       roundIndex: round.roundIndex,
@@ -837,6 +847,8 @@ async function resolveAndAdvance(
       attemptsUsed: attemptIndex,
       attemptsRemaining: 0,
       nextAudioUrl: null,
+      youtubeVideoId: null,
+      hookStartMs: 0,
       livesRemaining,
       runStatus: "COMPLETED",
       roundIndex: round.roundIndex,
@@ -844,7 +856,6 @@ async function resolveAndAdvance(
       bestStreak,
       points,
       reveal,
-      // The round is over; `reveal` says everything a hint would have.
       hint: null,
       ...computeRewards({
         score: run.score + points,
@@ -864,10 +875,36 @@ async function resolveAndAdvance(
 
   const nextIndex = round.roundIndex + 1;
 
-  // For MULTIPLAYER: use the room's pre-selected puzzle; for all other modes: sample randomly.
-  let pick: { puzzleId: string; popularity: number; targetPopularity: number } | null;
+  type NextPick = {
+    puzzleId: string;
+    popularity: number;
+    targetPopularity: number;
+    youtubeVideoId?: string | null;
+    hookStartMs?: number;
+  };
 
-  if (run.mode === "MULTIPLAYER" && run.multiplayerRoomId) {
+  // For DAILY and MULTIPLAYER: use the pre-selected puzzle set; for all other modes: sample randomly.
+  let pick: NextPick | null;
+
+  if (run.mode === "DAILY" && run.dailyChallengeId) {
+    const challengeRound = await tx.dailyChallengePuzzle.findUnique({
+      where: { dailyChallengeId_roundIndex: { dailyChallengeId: run.dailyChallengeId, roundIndex: nextIndex } },
+      select: {
+        puzzleId: true,
+        targetPopularity: true,
+        puzzle: { select: { song: { select: { externalId: true, hookStartMs: true } } } },
+      },
+    });
+    pick = challengeRound
+      ? {
+          puzzleId: challengeRound.puzzleId,
+          popularity: 0,
+          targetPopularity: challengeRound.targetPopularity ?? 0,
+          youtubeVideoId: challengeRound.puzzle.song?.externalId ?? null,
+          hookStartMs: challengeRound.puzzle.song?.hookStartMs ?? 0,
+        }
+      : null;
+  } else if (run.mode === "MULTIPLAYER" && run.multiplayerRoomId) {
     const roomRound = await tx.multiplayerRound.findUnique({
       where: { roomId_roundIndex: { roomId: run.multiplayerRoomId, roundIndex: nextIndex } },
       select: { puzzleId: true },
@@ -944,17 +981,16 @@ async function resolveAndAdvance(
 
   return {
     ladderRevision: run.ladderRevision,
-    // Stage 1 of the round that just opened. The player is entitled to it the
-    // moment the round exists, which is now — `nextAudioUrl` pointed at exactly
-    // these bytes before they were inlined.
     audio: nextRow ? pendingAudio(nextRow, 1) : null,
     result: {
       outcome,
       stageReached: finalStage,
       attemptsUsed: attemptIndex,
       attemptsRemaining: 0,
-      // Points at the NEXT round's stage 1.
       nextAudioUrl: `/api/runs/${run.id}/audio`,
+      // YouTube info for the NEXT round (pick came from samplePuzzle or room)
+      youtubeVideoId: pick.youtubeVideoId ?? null,
+      hookStartMs: pick.hookStartMs ?? 0,
       livesRemaining,
       runStatus: "IN_PROGRESS",
       roundIndex: round.roundIndex,
@@ -962,8 +998,6 @@ async function resolveAndAdvance(
       bestStreak,
       points,
       reveal,
-      // The round just resolved. The NEXT round starts at attempt 0, which earns
-      // no hint — so null is right here too, not a hint for the new puzzle.
       hint: null,
       ...computeRewards({
         score: nextRow?.score ?? run.score + points,
@@ -1100,6 +1134,8 @@ async function replay(tx: Tx, runId: string): Promise<TxResult> {
     release_year: number | null;
     decade: number | null;
     genres: string[] | null;
+    external_id: string | null;
+    hook_start_ms: number;
   } & AssetRow;
 
   const rows = await tx.$queryRaw<Row[]>`
@@ -1128,6 +1164,8 @@ async function replay(tx: Tx, runId: string): Promise<TxResult> {
       s."releaseYear"       AS release_year,
       s.decade              AS decade,
       s.genres              AS genres,
+      s."externalId"        AS external_id,
+      COALESCE(s."hookStartMs", 0) AS hook_start_ms,
       a."storageKey"        AS "storageKey",
       a."stageByteOffsets"  AS "stageByteOffsets",
       a."byteSize"          AS "byteSize",
@@ -1159,6 +1197,8 @@ async function replay(tx: Tx, runId: string): Promise<TxResult> {
       attemptsUsed,
       attemptsRemaining: row.max_attempts - attemptsUsed,
       nextAudioUrl: inProgress ? `/api/runs/${runId}/audio` : null,
+      youtubeVideoId: row.external_id ?? null,
+      hookStartMs: row.hook_start_ms,
       livesRemaining: row.lives_remaining,
       runStatus: row.status as AttemptResult["runStatus"],
       roundIndex: row.round_index ?? row.current_round_index,
