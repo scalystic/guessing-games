@@ -408,13 +408,13 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
                   const isDone = prog?.done ?? false;
                   return (
                     <div key={p.id} className="relative flex w-[58px] shrink-0 flex-col items-center gap-1.5">
-                      {!isDone && (
-                        <span
-                          className="absolute -inset-1 animate-[pulse-ring_1.4s_ease-out_infinite] rounded-full border-2"
-                          style={{ borderColor: p.isYou ? "var(--signal)" : p.color }}
-                        />
-                      )}
                       <div className="relative">
+                        {!isDone && (
+                          <span
+                            className="absolute -inset-1 rounded-full border-2"
+                            style={{ borderColor: p.isYou ? "var(--signal)" : p.color }}
+                          />
+                        )}
                         <span
                           className="flex h-11 w-11 items-center justify-center rounded-full text-[15px] font-bold"
                           style={{

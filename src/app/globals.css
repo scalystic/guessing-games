@@ -109,6 +109,17 @@ a {
   animation: panel-in 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* Keeps a scrollable container scrollable (wheel, trackpad, touch, keyboard)
+   without the OS/browser drawing its scrollbar track over the content —
+   for panels where a bar popping in on hover reads as a layout glitch. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 @keyframes pop-in {
   from { opacity: 0; transform: scale(0.7) translateY(6px); }
   to { opacity: 1; transform: scale(1) translateY(0); }

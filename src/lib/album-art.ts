@@ -29,7 +29,11 @@ export function fetchAlbumArtUrl(
 
   const promise = (async () => {
     try {
-      const term = [artist, album || title].filter(Boolean).join(" ");
+      // Title always has to be in the query — dropping it in favor of the
+      // album name (as this used to do) let a compilation album like "30
+      // Hits of Pritam" match on artist + album alone, returning whichever
+      // track off that compilation iTunes felt like, not the one asked for.
+      const term = [artist, title].filter(Boolean).join(" ");
       const params = new URLSearchParams({
         term,
         media: "music",
