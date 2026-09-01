@@ -488,7 +488,7 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
             <HeaderAction label="Daily" icon={<ChallengeIcon />} onClick={() => setShowChallenge(true)} />
             <HeaderAction label="Stats" icon={<StatsIcon />} onClick={() => setShowStats(true)} />
             <HeaderAction label="How to play" icon={<HelpIcon />} onClick={() => setShowHelp(true)} />
-            <MultiplayerEntry gameSlug={config.slug} tagline={config.tagline} revealLadder={config.revealLadder} maxAttempts={config.maxAttempts} />
+            <MultiplayerEntry gameSlug={config.slug} tagline={config.tagline} revealLadder={config.revealLadder} maxAttempts={config.maxAttempts} user={user} />
             <ProfileMenu user={user} />
           </nav>
         </header>

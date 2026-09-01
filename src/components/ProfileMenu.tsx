@@ -21,7 +21,16 @@ function UserIcon() {
   );
 }
 
-export function ProfileMenu({ user }: { user: CurrentUser }) {
+type Props = {
+  user: CurrentUser;
+  /// Swaps the default generic account-icon button for a caller-supplied
+  /// trigger (e.g. the multiplayer room header's own colored player-initial
+  /// avatar) — everything else (the dropdown, click-outside handling, guest
+  /// vs. signed-in content) stays identical either way.
+  trigger?: (props: { onClick: () => void; open: boolean }) => React.ReactNode;
+};
+
+export function ProfileMenu({ user, trigger }: Props) {
   const [open, setOpen] = useState(false);
   const [isLoggingOut, startLogout] = useTransition();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -37,17 +46,23 @@ export function ProfileMenu({ user }: { user: CurrentUser }) {
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
+  const toggleOpen = () => setOpen((value) => !value);
+
   return (
     <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        className="flex h-10 w-10 items-center justify-center rounded-full border border-(--hairline) bg-(--surface) text-(--text-dim) transition-colors duration-200 hover:bg-(--surface-hover) hover:text-(--text)"
-        aria-label="Account menu"
-        aria-expanded={open}
-      >
-        <UserIcon />
-      </button>
+      {trigger ? (
+        trigger({ onClick: toggleOpen, open })
+      ) : (
+        <button
+          type="button"
+          onClick={toggleOpen}
+          className="flex h-10 w-10 items-center justify-center rounded-full border border-(--hairline) bg-(--surface) text-(--text-dim) transition-colors duration-200 hover:bg-(--surface-hover) hover:text-(--text)"
+          aria-label="Account menu"
+          aria-expanded={open}
+        >
+          <UserIcon />
+        </button>
+      )}
 
       {open ? (
         <div className="absolute right-0 top-full z-20 mt-2 w-64 rounded-[10px] border border-(--hairline) bg-(--surface-strong) p-4 shadow-2xl shadow-black/25">

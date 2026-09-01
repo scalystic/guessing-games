@@ -6,6 +6,7 @@ import { MultiplayerPickerModal } from "@/components/MultiplayerPickerModal";
 import { RoomLobby } from "@/components/RoomLobby";
 import { LiveMultiplayerRound } from "@/components/LiveMultiplayerRound";
 import { useMultiplayerRoom } from "@/hooks/useMultiplayerRoom";
+import type { CurrentUser } from "@/lib/get-current-user";
 
 type View = "closed" | "modal" | "room";
 
@@ -14,6 +15,7 @@ type Props = {
   tagline: string | null;
   revealLadder: number[];
   maxAttempts: number;
+  user: CurrentUser;
 };
 
 type ApiEnvelope<T> = { data?: T; error?: { message: string } };
@@ -36,7 +38,7 @@ async function postJson<T>(url: string, body?: unknown): Promise<ApiEnvelope<T>>
 // individually, so switching between the lobby and the live round never tears
 // down and reconnects the socket mid-game. Which of those two renders is driven
 // entirely by `mp.phase`, which the server sets via room:state/round:start/etc.
-export function MultiplayerEntry({ gameSlug, tagline, revealLadder, maxAttempts }: Props) {
+export function MultiplayerEntry({ gameSlug, tagline, revealLadder, maxAttempts, user }: Props) {
   const router = useRouter();
   const [view, setView] = useState<View>("closed");
   const [roomCode, setRoomCode] = useState<string | null>(null);
@@ -105,6 +107,7 @@ export function MultiplayerEntry({ gameSlug, tagline, revealLadder, maxAttempts 
           tagline={tagline}
           revealLadder={revealLadder}
           maxAttempts={maxAttempts}
+          user={user}
           onLeave={handleLeave}
         />
       )}

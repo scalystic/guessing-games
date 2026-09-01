@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useMultiplayerRoom } from '@/hooks/useMultiplayerRoom'
 import { RoomLobby } from '@/components/RoomLobby'
 import { LiveMultiplayerRound } from '@/components/LiveMultiplayerRound'
+import type { CurrentUser } from '@/lib/get-current-user'
 
 type GameConfig = {
   slug: string
@@ -16,9 +17,10 @@ type GameConfig = {
 type Props = {
   code: string
   playerId: string
+  user: CurrentUser
 }
 
-export function RoomClient({ code, playerId }: Props) {
+export function RoomClient({ code, playerId, user }: Props) {
   const router = useRouter()
   const mp = useMultiplayerRoom(code, playerId)
   const [gameConfig, setGameConfig] = useState<GameConfig | null>(null)
@@ -60,6 +62,7 @@ export function RoomClient({ code, playerId }: Props) {
         tagline={gameConfig.tagline}
         revealLadder={gameConfig.revealLadder}
         maxAttempts={gameConfig.maxAttempts}
+        user={user}
         onLeave={handleLeave}
       />
     )

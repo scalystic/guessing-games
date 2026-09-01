@@ -1,5 +1,6 @@
 import { headers } from 'next/headers'
 import { ensurePlayer } from '@/lib/guest'
+import { getCurrentUser } from '@/lib/get-current-user'
 import { RoomClient } from './room-client'
 
 async function clientIp(): Promise<string | null> {
@@ -9,6 +10,6 @@ async function clientIp(): Promise<string | null> {
 
 export default async function RoomPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = await params
-  const { playerId } = await ensurePlayer(await clientIp())
-  return <RoomClient code={code.toUpperCase()} playerId={playerId} />
+  const [{ playerId }, user] = await Promise.all([ensurePlayer(await clientIp()), getCurrentUser()])
+  return <RoomClient code={code.toUpperCase()} playerId={playerId} user={user} />
 }

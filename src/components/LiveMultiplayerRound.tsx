@@ -6,11 +6,13 @@ import { GuessAutocomplete } from "@/components/GuessAutocomplete";
 import { AttemptTimeline } from "@/components/AttemptTimeline";
 import { CoverArt } from "@/components/CoverArt";
 import { PlayerBar } from "@/components/PlayerBar";
+import { ProfileMenu } from "@/components/ProfileMenu";
 import { toPlayerView } from "@/lib/multiplayer/player-view";
 import { previewPoints } from "@/lib/game/scoring/preview";
 import { newIdempotencyKey, type CatalogMatch, type RoundHint } from "@/lib/api/runs";
 import type { GuessRecord, PendingAction } from "@/hooks/useMelodleGame";
 import type { UseMultiplayerRoomResult } from "@/hooks/useMultiplayerRoom";
+import type { CurrentUser } from "@/lib/get-current-user";
 
 type Props = {
   mp: UseMultiplayerRoomResult;
@@ -19,6 +21,7 @@ type Props = {
   tagline: string | null;
   revealLadder: number[];
   maxAttempts: number;
+  user: CurrentUser;
   onLeave: () => void;
 };
 
@@ -55,7 +58,7 @@ async function callRun(
 // Nothing here is simulated: round:progress / round:results / game:end all
 // come from the socket, driven by every player's real attempts landing
 // server-side (see resolveRound in socket-handler.ts).
-export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLadder, maxAttempts, onLeave }: Props) {
+export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLadder, maxAttempts, user, onLeave }: Props) {
   const { phase, room, players, myPlayerId, myRun, roundResults, roundDeadline, finalRankings, roundProgress, chatMessages, sendChat, notifyRoundDone, rematch } = mp;
 
   const views = players.map((p) => toPlayerView(p, myPlayerId));
@@ -286,13 +289,21 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
                 <span className="h-1.5 w-1.5 rounded-full bg-(--success)" aria-hidden="true" />
                 Room {roomCode}
               </span>
-              <span
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold"
-                style={{ background: "var(--signal)", color: "var(--signal-ink)" }}
-                title="You"
-              >
-                {views.find((p) => p.isYou)?.initial ?? "Y"}
-              </span>
+              <ProfileMenu
+                user={user}
+                trigger={({ onClick }) => (
+                  <button
+                    type="button"
+                    onClick={onClick}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold"
+                    style={{ background: "var(--signal)", color: "var(--signal-ink)" }}
+                    title="You"
+                    aria-label="Account menu"
+                  >
+                    {views.find((p) => p.isYou)?.initial ?? "Y"}
+                  </button>
+                )}
+              />
               <button
                 type="button"
                 onClick={() => setShowLeaveConfirm(true)}
