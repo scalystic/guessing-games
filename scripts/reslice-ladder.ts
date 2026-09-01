@@ -1,5 +1,18 @@
 // Reslice — recompute PuzzleAsset.stageByteOffsets after a revealLadder change.
 //
+// ###########################################################################
+// # YOUTUBE-ONLY: DORMANT. Nothing reads stageByteOffsets any more — rounds
+// # stream from YouTube and the stage ladder is a play-window the client
+// # applies to the stream, not a set of byte offsets. Changing revealLadder no
+// # longer requires reslicing anything, so a ladder change is now just a
+// # Game.revealLadder update.
+// #
+// # Note the one behaviour that went with it: the audio route used to reject a
+// # ladderRevision mismatch, which is what made in-flight runs fail fast rather
+// # than hear a stale slice. There is no equivalent guard on a YouTube round —
+// # a ladder change takes effect for live runs immediately.
+// ###########################################################################
+//
 //   npm run reslice
 //
 // The stored clips don't change: stage N is a byte-range prefix of one ~30s MP3,

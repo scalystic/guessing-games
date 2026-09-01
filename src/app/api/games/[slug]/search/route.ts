@@ -96,16 +96,21 @@ export async function GET(
       FROM "Song" s
       JOIN "Puzzle" p
         ON p.id = s."puzzleId"
-      LEFT JOIN "PuzzleAsset" a
-        ON a."puzzleId" = p.id
-       AND a.kind = 'AUDIO_CLIP'::"AssetKind"
+      -- YOUTUBE-ONLY: the AUDIO_CLIP join and the stored-clip half of the
+      -- playability test are retired. This has to stay in lockstep with the
+      -- sampler in lib/game/selection.ts — a candidate the typeahead offers but
+      -- the sampler will never pick is a guess that can never be right.
+      --
+      -- LEFT JOIN "PuzzleAsset" a
+      --   ON a."puzzleId" = p.id
+      --  AND a.kind = 'AUDIO_CLIP'::"AssetKind"
       WHERE p."gameId" = ${game.id}
         AND p."isActive" = true
         AND p."isBlocked" = false
-        AND (
-          s."externalId" IS NOT NULL
-          OR coalesce(array_length(a."stageByteOffsets", 1), 0) >= ${game.maxAttempts}
-        )
+        -- Was: externalId IS NOT NULL OR array_length(stageByteOffsets, 1) >= maxAttempts.
+        -- (Not reproduced as SQL: an interpolation inside a -- comment still
+        -- binds a parameter Postgres never references, which fails the query.)
+        AND s."externalId" IS NOT NULL
         AND (
           s."searchText" LIKE ${`%${query}%`}
           OR ${query} <% s."searchText"

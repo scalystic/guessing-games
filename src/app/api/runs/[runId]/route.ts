@@ -2,7 +2,8 @@ import { prisma } from "@/lib/db";
 import { internalErrorJson, jsonError, jsonOk } from "@/lib/api/response";
 import { readRunToken, runTokenMatches } from "@/lib/game/run-token";
 import { deriveHint, type RoundHint } from "@/lib/game/hint";
-import { computeRewards, inlineAudioFor } from "@/lib/game/attempt";
+// YOUTUBE-ONLY: `inlineAudioFor` is retired along with the stored-clip path.
+import { computeRewards } from "@/lib/game/attempt";
 
 /// GET /api/runs/[runId] — the state of a run, for resume.
 ///
@@ -124,18 +125,21 @@ export async function GET(
                 hookStartMs: true,
               },
             },
-            // Only the current round's asset is used, but selecting it here is
-            // free — it rides the join this query already makes — and it lets a
-            // resume inline its audio instead of making a second request.
-            assets: {
-              where: { kind: "AUDIO_CLIP" as const },
-              select: {
-                storageKey: true,
-                stageByteOffsets: true,
-                byteSize: true,
-                ladderRevision: true,
-              },
-            },
+            // YOUTUBE-ONLY: the current round's AUDIO_CLIP asset used to be
+            // selected here — free, since it rode a join this query already
+            // makes — so a resume could inline its audio instead of making a
+            // second request. A resumed round now rebuilds from externalId +
+            // hookStartMs above and streams from YouTube.
+            //
+            // assets: {
+            //   where: { kind: "AUDIO_CLIP" as const },
+            //   select: {
+            //     storageKey: true,
+            //     stageByteOffsets: true,
+            //     byteSize: true,
+            //     ladderRevision: true,
+            //   },
+            // },
           },
         },
         guesses: {
@@ -246,18 +250,25 @@ export async function GET(
       roundsSolved: run.roundsSolved,
       roundsFailed: run.roundsFailed,
       expiresAt: run.expiresAt,
-      // Null once the run is over — there is no more audio to earn.
-      audioUrl: run.status === "IN_PROGRESS" && current ? `/api/runs/${runId}/audio` : null,
-      // A resume used to be two requests: this one, then /audio. The asset came
-      // along with the round above, so the bytes can too.
-      nextAudio:
-        run.status === "IN_PROGRESS" && currentRound?.puzzle.assets[0]
-          ? await inlineAudioFor(
-              currentRound.puzzle.assets[0],
-              currentRound.stageReached,
-              run.game.ladderRevision,
-            )
-          : null,
+      // YOUTUBE-ONLY: both of these are now permanently null. Kept on the wire
+      // so the resume payload keeps its shape for any client still reading them,
+      // and because null is exactly what the current client expects on a YouTube
+      // round — it means "stream, don't fetch".
+      //
+      // audioUrl pointed at GET /api/runs/[runId]/audio, whose body is retired.
+      // nextAudio inlined the resumed round's earned stage so a resume was one
+      // request instead of two:
+      //
+      //   nextAudio:
+      //     run.status === "IN_PROGRESS" && currentRound?.puzzle.assets[0]
+      //       ? await inlineAudioFor(
+      //           currentRound.puzzle.assets[0],
+      //           currentRound.stageReached,
+      //           run.game.ladderRevision,
+      //         )
+      //       : null,
+      audioUrl: null,
+      nextAudio: null,
       current,
       past,
       ...rewards,

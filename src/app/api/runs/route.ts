@@ -4,7 +4,7 @@ import { internalErrorJson, jsonError, jsonOk } from "@/lib/api/response";
 import { ensurePlayer } from "@/lib/guest";
 import { mintRunToken } from "@/lib/game/run-token";
 import { samplePuzzle } from "@/lib/game/selection";
-import { inlineAudioFor } from "@/lib/game/attempt";
+// YOUTUBE-ONLY: `inlineAudioFor` is retired along with the stored-clip path.
 import { randomBytes, randomUUID } from "crypto";
 
 /// POST /api/runs — start a run.
@@ -79,11 +79,15 @@ export async function POST(request: Request): Promise<Response> {
               puzzle: {
                 select: {
                   song: { select: { externalId: true, hookStartMs: true } },
-                  assets: {
-                    where: { kind: "AUDIO_CLIP" as const },
-                    select: { storageKey: true, stageByteOffsets: true, byteSize: true, ladderRevision: true },
-                    take: 1,
-                  },
+                  // YOUTUBE-ONLY: the first round's AUDIO_CLIP asset used to be
+                  // selected here so stage 1 could ride along with the start
+                  // response:
+                  //
+                  // assets: {
+                  //   where: { kind: "AUDIO_CLIP" as const },
+                  //   select: { storageKey: true, stageByteOffsets: true, byteSize: true, ladderRevision: true },
+                  //   take: 1,
+                  // },
                 },
               },
             },
@@ -162,10 +166,12 @@ export async function POST(request: Request): Promise<Response> {
       }
 
       const firstPuzzle = firstEntry.puzzle;
-      const firstAsset = firstPuzzle.assets[0] ?? null;
       const youtubeVideoId = firstPuzzle.song?.externalId ?? null;
       const hookStartMs = firstPuzzle.song?.hookStartMs ?? 0;
-      const nextAudio = firstAsset ? await inlineAudioFor(firstAsset, 1, game.ladderRevision) : null;
+      // YOUTUBE-ONLY: was
+      //   const firstAsset = firstPuzzle.assets[0] ?? null;
+      //   const nextAudio = firstAsset ? await inlineAudioFor(firstAsset, 1, game.ladderRevision) : null;
+      const nextAudio = null;
 
       return jsonOk({
         runId,
@@ -176,7 +182,8 @@ export async function POST(request: Request): Promise<Response> {
         stageReached: 1,
         attemptsRemaining: game.maxAttempts,
         livesRemaining: created.lives_remaining,
-        audioUrl: `/api/runs/${runId}/audio`,
+        // YOUTUBE-ONLY: was `/api/runs/${runId}/audio`, whose body is retired.
+        audioUrl: null,
         nextAudio,
         youtubeVideoId,
         hookStartMs,
@@ -258,9 +265,14 @@ export async function POST(request: Request): Promise<Response> {
       currentRoundIndex: created.current_round_index,
     };
 
-    // Stage 1 rides along with the response for stored-audio songs.
-    // Falls back to null for YouTube songs (no stored clip).
-    const nextAudio = pick.asset ? await inlineAudioFor(pick.asset, 1, game.ladderRevision) : null;
+    // YOUTUBE-ONLY: stage 1 used to ride along with this response for
+    // stored-audio songs:
+    //
+    //   const nextAudio = pick.asset ? await inlineAudioFor(pick.asset, 1, game.ladderRevision) : null;
+    //
+    // Every pick is a YouTube pick now, so there is nothing to inline. The
+    // client reads `youtubeVideoId` below and streams.
+    const nextAudio = null;
 
     // The token is returned exactly once and never persisted in raw form.
     return jsonOk({
@@ -272,7 +284,8 @@ export async function POST(request: Request): Promise<Response> {
       stageReached: 1,
       attemptsRemaining: game.maxAttempts,
       livesRemaining: run.livesRemaining,
-      audioUrl: `/api/runs/${run.id}/audio`,
+      // YOUTUBE-ONLY: was `/api/runs/${run.id}/audio`, whose body is retired.
+      audioUrl: null,
       nextAudio,
       youtubeVideoId: pick.youtubeVideoId ?? null,
       hookStartMs: pick.hookStartMs ?? 0,

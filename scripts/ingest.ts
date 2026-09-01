@@ -1,5 +1,25 @@
 // Catalog ingest — master audio file in, playable Puzzle out.
 //
+// ###########################################################################
+// # YOUTUBE-ONLY: THIS SCRIPT NO LONGER PRODUCES A PLAYABLE PUZZLE.
+// #
+// # The game streams every round from YouTube. Playability is now decided by
+// # `Song.externalId IS NOT NULL` alone (see lib/game/selection.ts), and the
+// # route that sliced stage prefixes out of a stored clip
+// # (api/runs/[runId]/audio) is retired. A puzzle ingested here gets a
+// # PuzzleAsset the game will never read, and — unless something also sets
+// # externalId — will never be sampled.
+// #
+// # To add songs, use the admin YouTube import (api/admin/youtube/import),
+// # which writes Song.externalId and the cover art. Artwork still lives in R2;
+// # only audio clips are retired.
+// #
+// # The code below is left intact rather than gutted: it is the only thing that
+// # knows how to cut a window, normalise it, and walk MP3 frames for stage byte
+// # offsets, and that knowledge is expensive to rebuild. Treat it as the
+// # reference implementation for restoring stored clips, not as a live tool.
+// ###########################################################################
+//
 //   npm run ingest -- --manifest ./ingest/sample.json --dry-run
 //   npm run ingest -- --manifest ./ingest/sample.json
 //

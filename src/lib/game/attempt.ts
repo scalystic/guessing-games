@@ -5,7 +5,8 @@ import { samplePuzzle, type DecadeFilter } from "@/lib/game/selection";
 import { scoreSolvedRound, solveExtendsStreak } from "@/lib/game/scoring/v1";
 import { deriveHint, type RoundHint } from "@/lib/game/hint";
 import { runTokenMatches } from "@/lib/game/run-token";
-import { readClipPrefix } from "@/lib/storage";
+// YOUTUBE-ONLY: the stored-clip reader is retired along with inlineAudioFor.
+// import { readClipPrefix } from "@/lib/storage";
 
 /// One attempt — a guess or a skip. Both advance the ladder, so they share every
 /// line of this except whether a correct answer is even possible.
@@ -77,16 +78,19 @@ export type AchievementEntry = {
   color: string;
 };
 
-/// Audio the player has just become entitled to, delivered WITH the attempt
+/// YOUTUBE-ONLY: nothing constructs this any more — `nextAudio` is a permanent
+/// null. The type is retained because it is part of the wire shape.
+///
+/// Audio the player had just become entitled to, delivered WITH the attempt
 /// response instead of behind another request.
 ///
-/// This is the second half of the latency fix. The client used to await the
+/// This was the second half of the latency fix. The client used to await the
 /// attempt, then await GET /audio — two more DB reads plus an R2 fetch, strictly
-/// after the first call returned. Since the transaction already knows which
-/// stage was unlocked and which object holds it, the bytes can ride along.
+/// after the first call returned. Since the transaction already knew which stage
+/// was unlocked and which object held it, the bytes could ride along.
 ///
-/// It leaks nothing new: `nextAudioUrl` already pointed at exactly these bytes,
-/// and the round it belongs to was already open server-side by the time the
+/// It leaked nothing new: `nextAudioUrl` already pointed at exactly these bytes,
+/// and the round it belonged to was already open server-side by the time the
 /// response was written.
 export type InlineAudio = {
   /// base64 of the earned prefix. Small by construction — a stage slice is a few
@@ -102,14 +106,16 @@ export type AttemptResult = {
   stageReached: number;
   attemptsUsed: number;
   attemptsRemaining: number;
-  /// Null once the round resolves — there is no more audio to earn.
+  /// YOUTUBE-ONLY: always null now. Was the URL of the stage just earned, and
+  /// null once the round resolved because there was no more audio to earn.
   nextAudioUrl: string | null;
-  /// The bytes `nextAudioUrl` would have returned. Null when there is no next
-  /// stage, or when the asset is unservable — in which case the client falls
-  /// back to the route, which reports the failure properly.
+  /// YOUTUBE-ONLY: always null now. Was the bytes `nextAudioUrl` would have
+  /// returned — null when there was no next stage, or when the asset was
+  /// unservable, in which case the client fell back to the route.
   nextAudio: InlineAudio | null;
   /// YouTube video ID for the round currently in play (PENDING) or the next
-  /// round (SOLVED/FAILED). Null for stored-audio songs.
+  /// round (SOLVED/FAILED). THE audio source — null only when the run has no
+  /// next round (a completed run), never because a round uses stored audio.
   youtubeVideoId: string | null;
   /// Millisecond offset in the YouTube video where the hook starts.
   hookStartMs: number;
@@ -243,71 +249,85 @@ export function computeRewards(args: {
 }
 
 // ---------------------------------------------------------------------------
-// Audio assets
+// Audio assets — RETIRED (YouTube-only)
 // ---------------------------------------------------------------------------
 
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
-/// Everything needed to slice a stage out of a stored clip, as read alongside
-/// the rows that decided which stage was earned.
-export type AssetRow = {
-  storageKey: string | null;
-  stageByteOffsets: number[] | null;
-  byteSize: number | null;
-  ladderRevision: number | null;
-};
-
-/// A pending fetch: which object, and how many bytes of it the player has paid
-/// for. Resolved AFTER the transaction commits — holding a row lock open across
-/// an R2 round trip would serialize every concurrent attempt behind object
-/// storage, which is the opposite of the point.
-type PendingAudio = { asset: AssetRow; stage: number };
-
-function pendingAudio(asset: AssetRow, stage: number): PendingAudio | null {
-  return asset.storageKey ? { asset, stage } : null;
-}
-
-/// Resolve inlined audio, degrading to null rather than failing the attempt.
+/// YOUTUBE-ONLY: every round now streams from YouTube, so an attempt carries a
+/// video id and a hook offset instead of audio bytes. `nextAudio` stays on the
+/// wire as a permanent null — the client already treats null as "this round is a
+/// YouTube round", so keeping the field costs nothing and keeps `AttemptResult`
+/// stable for anything still reading it.
 ///
-/// Every reason this can return null — missing asset, stale ladder revision, a
-/// stage past the end of the offsets, R2 unreachable — is a reason GET /audio
-/// would return a 5xx with a precise message. Reproducing that reasoning here
-/// would be a second copy of it, so the fast path simply declines and the client
-/// falls back to the route it already knows how to call.
-export async function inlineAudioFor(
-  asset: AssetRow | null,
-  stage: number,
-  gameLadderRevision: number,
-): Promise<InlineAudio | null> {
-  if (!asset || !asset.storageKey || !asset.stageByteOffsets) return null;
-  if (asset.ladderRevision !== gameLadderRevision) return null;
-
-  const endExclusive = asset.stageByteOffsets[stage - 1];
-  if (endExclusive === undefined || endExclusive <= 0) return null;
-
-  try {
-    const bytes = await readClipPrefix(asset.storageKey, endExclusive, asset.byteSize);
-    return {
-      bytes: Buffer.from(bytes).toString("base64"),
-      stage,
-      byteSize: bytes.length,
-    };
-  } catch (error) {
-    console.warn(
-      `[attempt] inline audio declined for ${asset.storageKey} stage ${stage}:`,
-      error instanceof Error ? error.message : error,
-    );
-    return null;
-  }
-}
-
-function resolveAudio(
-  pending: PendingAudio | null,
-  gameLadderRevision: number,
-): Promise<InlineAudio | null> {
-  if (!pending) return Promise.resolve(null);
-  return inlineAudioFor(pending.asset, pending.stage, gameLadderRevision);
-}
+/// What was here, and why none of it is needed:
+///
+///   AssetRow      — the AUDIO_CLIP columns (storageKey, stageByteOffsets,
+///                   byteSize, ladderRevision) read alongside the rows that
+///                   decided which stage was earned.
+///   PendingAudio  — a deferred {asset, stage} fetch, resolved AFTER the
+///                   transaction committed so a row lock was never held open
+///                   across an R2 round trip.
+///   pendingAudio  — built one when the round had a stored clip.
+///   inlineAudioFor— read `stageByteOffsets[stage - 1]` bytes off the object and
+///                   base64'd them into the response, so a stage arrived without
+///                   a second request. Degraded to null rather than failing the
+///                   attempt, because every reason it could fail was a reason
+///                   GET /audio would report precisely.
+///   resolveAudio  — awaited the pending fetch post-commit.
+///
+/// Restoring the stored-clip path means bringing these back together with the
+/// `PuzzleAsset` joins removed from the three raw queries below (each is marked
+/// YOUTUBE-ONLY), the sampler predicate in game/selection.ts, and the body of
+/// GET /api/runs/[runId]/audio.
+///
+/// export type AssetRow = {
+///   storageKey: string | null;
+///   stageByteOffsets: number[] | null;
+///   byteSize: number | null;
+///   ladderRevision: number | null;
+/// };
+///
+/// type PendingAudio = { asset: AssetRow; stage: number };
+///
+/// function pendingAudio(asset: AssetRow, stage: number): PendingAudio | null {
+///   return asset.storageKey ? { asset, stage } : null;
+/// }
+///
+/// export async function inlineAudioFor(
+///   asset: AssetRow | null,
+///   stage: number,
+///   gameLadderRevision: number,
+/// ): Promise<InlineAudio | null> {
+///   if (!asset || !asset.storageKey || !asset.stageByteOffsets) return null;
+///   if (asset.ladderRevision !== gameLadderRevision) return null;
+///
+///   const endExclusive = asset.stageByteOffsets[stage - 1];
+///   if (endExclusive === undefined || endExclusive <= 0) return null;
+///
+///   try {
+///     const bytes = await readClipPrefix(asset.storageKey, endExclusive, asset.byteSize);
+///     return {
+///       bytes: Buffer.from(bytes).toString("base64"),
+///       stage,
+///       byteSize: bytes.length,
+///     };
+///   } catch (error) {
+///     console.warn(
+///       `[attempt] inline audio declined for ${asset.storageKey} stage ${stage}:`,
+///       error instanceof Error ? error.message : error,
+///     );
+///     return null;
+///   }
+/// }
+///
+/// function resolveAudio(
+///   pending: PendingAudio | null,
+///   gameLadderRevision: number,
+/// ): Promise<InlineAudio | null> {
+///   if (!pending) return Promise.resolve(null);
+///   return inlineAudioFor(pending.asset, pending.stage, gameLadderRevision);
+/// }
 
 // ---------------------------------------------------------------------------
 // Locking read
@@ -344,10 +364,11 @@ type LockedRow = {
   round_outcome: string | null;
   stage_reached: number | null;
   attempts_used: number | null;
-} & AssetRow;
+  // YOUTUBE-ONLY: was `} & AssetRow;`
+};
 
 /// The one read every path starts from: lock the Run, and pull the run, its
-/// game's config, the current round, that round's audio asset, the hint source
+/// game's config, the current round, the hint source
 /// and the perfect-sync flag in the same statement.
 ///
 /// `FOR UPDATE OF r` rather than a bare `FOR UPDATE`: RunRound is the nullable
@@ -388,18 +409,16 @@ async function lockAndRead(tx: Tx, runId: string): Promise<LockedRow> {
       rr."puzzleId"           AS round_puzzle_id,
       rr.outcome::text        AS round_outcome,
       rr."stageReached"       AS stage_reached,
-      rr."attemptsUsed"       AS attempts_used,
-      a."storageKey"          AS "storageKey",
-      a."stageByteOffsets"    AS "stageByteOffsets",
-      a."byteSize"            AS "byteSize",
-      a."ladderRevision"      AS "ladderRevision"
+      rr."attemptsUsed"       AS attempts_used
+      -- YOUTUBE-ONLY: AUDIO_CLIP columns and their join are retired.
+      --   a."storageKey", a."stageByteOffsets", a."byteSize", a."ladderRevision"
     FROM "Run" r
     JOIN "Game" g
       ON g.id = r."gameId"
     LEFT JOIN "RunRound" rr
       ON rr."runId" = r.id AND rr."roundIndex" = r."currentRoundIndex"
-    LEFT JOIN "PuzzleAsset" a
-      ON a."puzzleId" = rr."puzzleId" AND a.kind = 'AUDIO_CLIP'::"AssetKind"
+    -- LEFT JOIN "PuzzleAsset" a
+    --   ON a."puzzleId" = rr."puzzleId" AND a.kind = 'AUDIO_CLIP'::"AssetKind"
     WHERE r.id = ${runId}
     FOR UPDATE OF r
   `;
@@ -457,7 +476,7 @@ type RoundFacts = {
   puzzleId: string;
   stageReached: number;
   attemptsUsed: number;
-  asset: AssetRow;
+  // YOUTUBE-ONLY: was `asset: AssetRow;`
 };
 
 /// Validate the locked row into the shape the rest of the file works with, and
@@ -512,12 +531,8 @@ function facts(row: LockedRow, runId: string): { run: RunFacts; round: RoundFact
       puzzleId: row.round_puzzle_id,
       stageReached: row.stage_reached,
       attemptsUsed: row.attempts_used,
-      asset: {
-        storageKey: row.storageKey,
-        stageByteOffsets: row.stageByteOffsets,
-        byteSize: row.byteSize,
-        ladderRevision: row.ladderRevision,
-      },
+      // YOUTUBE-ONLY: the AUDIO_CLIP asset used to be assembled here from the
+      // locked row's storageKey/stageByteOffsets/byteSize/ladderRevision.
     },
   };
 }
@@ -538,7 +553,10 @@ function livesEndTheRun(mode: RunMode): boolean {
 // ---------------------------------------------------------------------------
 
 export async function applyAttempt(input: AttemptInput): Promise<AttemptResult> {
-  const { result, audio, ladderRevision } = await prisma.$transaction(async (tx) => {
+  // YOUTUBE-ONLY: was `{ result, audio, ladderRevision }` — the extra two fed the
+  // post-commit stored-clip fetch. The producers still return them (see TxResult)
+  // so restoring that fetch is a local change; nothing here reads them.
+  const { result } = await prisma.$transaction(async (tx) => {
     const row = await lockAndRead(tx, input.runId);
     assertToken(row, input.runToken);
     const { run, round } = facts(row, input.runId);
@@ -562,12 +580,18 @@ export async function applyAttempt(input: AttemptInput): Promise<AttemptResult> 
     return advanceLadder(tx, { run, round, attemptIndex, revealMs, input });
   });
 
-  return { ...result, nextAudio: await resolveAudio(audio, ladderRevision) };
+  // YOUTUBE-ONLY: was `nextAudio: await resolveAudio(audio, ladderRevision)`.
+  // Nothing is fetched post-commit any more; the round's video id and hook offset
+  // are already in `result`.
+  return { ...result, nextAudio: null };
 }
 
 type TxResult = {
   result: Omit<AttemptResult, "nextAudio">;
-  audio: PendingAudio | null;
+  /// YOUTUBE-ONLY: was `audio: PendingAudio | null` — the deferred stored-clip
+  /// fetch. Kept as an always-null field so the three producers below stay
+  /// structurally identical to their stored-clip versions.
+  audio: null;
   ladderRevision: number;
 };
 
@@ -660,13 +684,17 @@ async function advanceLadder(
 
   return {
     ladderRevision: run.ladderRevision,
-    audio: pendingAudio(round.asset, stageReached),
+    // YOUTUBE-ONLY: was `pendingAudio(round.asset, stageReached)`.
+    audio: null,
     result: {
       outcome: "PENDING",
       stageReached,
       attemptsUsed,
       attemptsRemaining: run.maxAttempts - attemptsUsed,
-      nextAudioUrl: `/api/runs/${run.id}/audio`,
+      // YOUTUBE-ONLY: was `/api/runs/${run.id}/audio`. That route now
+      // returns 410, so advertising it would hand the client a URL that
+      // can only fail. Null is what a YouTube round means anyway.
+      nextAudioUrl: null,
       youtubeVideoId: row.external_id ?? null,
       hookStartMs: row.hook_start_ms,
       livesRemaining: run.livesRemaining,
@@ -907,9 +935,26 @@ async function resolveAndAdvance(
   } else if (run.mode === "MULTIPLAYER" && run.multiplayerRoomId) {
     const roomRound = await tx.multiplayerRound.findUnique({
       where: { roomId_roundIndex: { roomId: run.multiplayerRoomId, roundIndex: nextIndex } },
-      select: { puzzleId: true },
+      // The song join is NOT optional the way it looks. This branch used to
+      // select puzzleId alone and leave youtubeVideoId/hookStartMs to their `??`
+      // defaults, which was survivable while a stored clip could still answer
+      // for the round: the client fell back to GET /audio. YouTube-only removes
+      // that fallback, so omitting these here is a silent round — a puzzle with
+      // no video id and no bytes.
+      select: {
+        puzzleId: true,
+        puzzle: { select: { song: { select: { externalId: true, hookStartMs: true } } } },
+      },
     });
-    pick = roomRound ? { puzzleId: roomRound.puzzleId, popularity: 0, targetPopularity: 0 } : null;
+    pick = roomRound
+      ? {
+          puzzleId: roomRound.puzzleId,
+          popularity: 0,
+          targetPopularity: 0,
+          youtubeVideoId: roomRound.puzzle.song?.externalId ?? null,
+          hookStartMs: roomRound.puzzle.song?.hookStartMs ?? 0,
+        }
+      : null;
   } else {
     const used = await tx.runRound.findMany({
       where: { runId: run.id },
@@ -937,7 +982,8 @@ async function resolveAndAdvance(
     return finish();
   }
 
-  type NextRow = { score: number | null } & AssetRow;
+  // YOUTUBE-ONLY: was `{ score: number | null } & AssetRow`.
+  type NextRow = { score: number | null };
 
   const nextRows = await tx.$queryRaw<NextRow[]>`
     WITH nr AS (
@@ -966,28 +1012,30 @@ async function resolveAndAdvance(
       WHERE id = ${run.id} AND EXISTS (SELECT 1 FROM nr)
       RETURNING score
     )
-    SELECT
-      (SELECT score FROM ru) AS score,
-      a."storageKey"         AS "storageKey",
-      a."stageByteOffsets"   AS "stageByteOffsets",
-      a."byteSize"           AS "byteSize",
-      a."ladderRevision"     AS "ladderRevision"
-    FROM (SELECT 1) d
-    LEFT JOIN "PuzzleAsset" a
-      ON a."puzzleId" = ${pick.puzzleId} AND a.kind = 'AUDIO_CLIP'::"AssetKind"
+    -- YOUTUBE-ONLY: the AUDIO_CLIP lookup for the round just opened is retired.
+    -- It used to select a."storageKey"/"stageByteOffsets"/"byteSize"/"ladderRevision"
+    -- over FROM (SELECT 1) d LEFT JOIN "PuzzleAsset" a ON a."puzzleId" = <pick>
+    -- AND a.kind = 'AUDIO_CLIP', so stage 1 of the next round could ride along
+    -- with the response that resolved this one.
+    -- (No backticks in here: this is inside a template literal.)
+    SELECT (SELECT score FROM ru) AS score
   `;
 
   const nextRow = nextRows[0];
 
   return {
     ladderRevision: run.ladderRevision,
-    audio: nextRow ? pendingAudio(nextRow, 1) : null,
+    // YOUTUBE-ONLY: was `nextRow ? pendingAudio(nextRow, 1) : null`.
+    audio: null,
     result: {
       outcome,
       stageReached: finalStage,
       attemptsUsed: attemptIndex,
       attemptsRemaining: 0,
-      nextAudioUrl: `/api/runs/${run.id}/audio`,
+      // YOUTUBE-ONLY: was `/api/runs/${run.id}/audio`. That route now
+      // returns 410, so advertising it would hand the client a URL that
+      // can only fail. Null is what a YouTube round means anyway.
+      nextAudioUrl: null,
       // YouTube info for the NEXT round (pick came from samplePuzzle or room)
       youtubeVideoId: pick.youtubeVideoId ?? null,
       hookStartMs: pick.hookStartMs ?? 0,
@@ -1054,7 +1102,8 @@ async function completeRun(
 /// ms for every rung crossed is banked, and one life is lost, exactly as the
 /// loop produced.
 export async function applyGiveUp(input: GiveUpInput): Promise<AttemptResult> {
-  const { result, audio, ladderRevision } = await prisma.$transaction(async (tx) => {
+  // YOUTUBE-ONLY: see applyAttempt — `audio`/`ladderRevision` are unread now.
+  const { result } = await prisma.$transaction(async (tx) => {
     const row = await lockAndRead(tx, input.runId);
     assertToken(row, input.runToken);
     const { run, round } = facts(row, input.runId);
@@ -1102,7 +1151,8 @@ export async function applyGiveUp(input: GiveUpInput): Promise<AttemptResult> {
     });
   });
 
-  return { ...result, nextAudio: await resolveAudio(audio, ladderRevision) };
+  // YOUTUBE-ONLY: was `nextAudio: await resolveAudio(audio, ladderRevision)`.
+  return { ...result, nextAudio: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -1136,7 +1186,8 @@ async function replay(tx: Tx, runId: string): Promise<TxResult> {
     genres: string[] | null;
     external_id: string | null;
     hook_start_ms: number;
-  } & AssetRow;
+    // YOUTUBE-ONLY: was `} & AssetRow;`
+  };
 
   const rows = await tx.$queryRaw<Row[]>`
     SELECT
@@ -1165,18 +1216,16 @@ async function replay(tx: Tx, runId: string): Promise<TxResult> {
       s.decade              AS decade,
       s.genres              AS genres,
       s."externalId"        AS external_id,
-      COALESCE(s."hookStartMs", 0) AS hook_start_ms,
-      a."storageKey"        AS "storageKey",
-      a."stageByteOffsets"  AS "stageByteOffsets",
-      a."byteSize"          AS "byteSize",
-      a."ladderRevision"    AS "ladderRevision"
+      COALESCE(s."hookStartMs", 0) AS hook_start_ms
+      -- YOUTUBE-ONLY: AUDIO_CLIP columns and their join are retired.
+      --   a."storageKey", a."stageByteOffsets", a."byteSize", a."ladderRevision"
     FROM "Run" r
     JOIN "Game" g ON g.id = r."gameId"
     LEFT JOIN "RunRound" rr
       ON rr."runId" = r.id AND rr."roundIndex" = r."currentRoundIndex"
     LEFT JOIN "Song" s ON s."puzzleId" = rr."puzzleId"
-    LEFT JOIN "PuzzleAsset" a
-      ON a."puzzleId" = rr."puzzleId" AND a.kind = 'AUDIO_CLIP'::"AssetKind"
+    -- LEFT JOIN "PuzzleAsset" a
+    --   ON a."puzzleId" = rr."puzzleId" AND a.kind = 'AUDIO_CLIP'::"AssetKind"
     WHERE r.id = ${runId}
   `;
 
@@ -1186,17 +1235,21 @@ async function replay(tx: Tx, runId: string): Promise<TxResult> {
   const outcome = (row.round_outcome ?? "PENDING") as "PENDING" | "SOLVED" | "FAILED";
   const stageReached = row.stage_reached ?? 1;
   const attemptsUsed = row.attempts_used ?? 0;
-  const inProgress = row.status === "IN_PROGRESS";
+  // YOUTUBE-ONLY: `const inProgress = row.status === "IN_PROGRESS";` used to
+  // gate both audio fields below. Both are unconditionally null now, leaving it
+  // with no reader.
 
   return {
     ladderRevision: row.ladder_revision,
-    audio: inProgress ? pendingAudio(row, stageReached) : null,
+    // YOUTUBE-ONLY: was `inProgress ? pendingAudio(row, stageReached) : null`.
+    audio: null,
     result: {
       outcome,
       stageReached,
       attemptsUsed,
       attemptsRemaining: row.max_attempts - attemptsUsed,
-      nextAudioUrl: inProgress ? `/api/runs/${runId}/audio` : null,
+      // YOUTUBE-ONLY: was `inProgress ? `/api/runs/${runId}/audio` : null`.
+      nextAudioUrl: null,
       youtubeVideoId: row.external_id ?? null,
       hookStartMs: row.hook_start_ms,
       livesRemaining: row.lives_remaining,

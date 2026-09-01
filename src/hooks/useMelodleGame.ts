@@ -195,6 +195,17 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
   ///
   /// The fallback path, for a resume and for the rare response that declined to
   /// inline its audio.
+  ///
+  /// YOUTUBE-ONLY — DORMANT. Every call site is guarded by `!youtubeVideoId`, and
+  /// the server now only ever samples puzzles that have a video id, so this and
+  /// `loadRevealAudio` below are unreachable in practice; the route they call
+  /// (GET /api/runs/[runId]/audio) returns 410.
+  ///
+  /// They are kept, rather than deleted, because deleting them cascades: the
+  /// `audioUrl` / `revealAudioUrl` / `audioLoading` / `revealAudioLoading` values
+  /// this hook returns feed PlayerBar's `<audio>` branch and the result panel, and
+  /// tearing those out is a UI change, not a source-of-audio change. They stay
+  /// wired but cold, so restoring stored clips is a server-side revert.
   const loadAudio = useCallback(
     async (id: string, generation: number) => {
       const token = tokenRef.current;
@@ -573,14 +584,22 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
         ];
       });
 
-      await loadRevealAudio(id, generation);
+      // YOUTUBE-ONLY: was an unconditional `await loadRevealAudio(id, generation)`.
+      //
+      // It was the one reveal fetch with no `!youtubeVideoId` guard, which was
+      // survivable while stored clips existed and merely wasteful on a YouTube
+      // round — loadRevealAudio is best-effort and swallows its failure. With the
+      // stored-clip route retired it is a guaranteed 410 on every give-up, so it
+      // is gone rather than left to fail quietly. The reveal for a YouTube round
+      // is the embedded player seeking back to the hook, not a blob URL.
+      if (!youtubeVideoId) await loadRevealAudio(id, generation);
     } catch (cause) {
       if (generation !== generationRef.current) return;
       setError(messageFor(cause, "Giving up failed."));
     } finally {
       if (generation === generationRef.current) setPendingAction(null);
     }
-  }, [runId, pendingAction, status, applyResult, loadRevealAudio]);
+  }, [runId, pendingAction, status, applyResult, loadRevealAudio, youtubeVideoId]);
 
   /// Move to the round the server already opened when this one resolved. If the
   /// run itself finished, start a new one (PRACTICE) or stay on the results (DAILY).

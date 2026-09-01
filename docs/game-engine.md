@@ -82,32 +82,60 @@ stage 6, not a formality.
    title, no artist in any response until `outcome != PENDING`. The typeahead is
    backed by a catalog-wide search endpoint that has no idea what the current
    round is.
-2. **Audio is one stored object, sliced per stage on the way out.** A puzzle has a
-   single `AUDIO_CLIP` holding a 30s cut, of which the ladder can unlock 15s, and
-   the stage-N response is a byte-range prefix of it — `bytes=0-(stageByteOffsets[N-1] - 1)`,
-   with the offsets precomputed at ingest. The client is never handed a longer
-   buffer than it earned, so there is nothing to scrub ahead into. Two
-   consequences that are easy to get wrong:
+2. ~~**Audio is one stored object, sliced per stage on the way out.**~~
+   **RETIRED — audio is no longer server-metered.** Read this one as history plus
+   a warning, not as a property of the running system.
+
+   Every round now streams from YouTube. The server hands the client
+   `Song.externalId` and `Song.hookStartMs`; the browser plays through the YouTube
+   IFrame API, and the stage length is enforced by a **client-side timer** in
+   `components/PlayerBar.tsx` (`handleYoutubePlay`). Concretely:
+
+   - **The answer is in the response.** A video id names the song. Anyone reading
+     one network payload — or the DOM — has the answer without guessing.
+   - **The stage ladder is advisory.** Patching the timer, or just using the
+     embedded player's own controls, unlocks the whole track.
+
+   This is not a bug to be fixed on top of an embedded player; it is what
+   delegating playback to a third-party player costs. Do not add features that
+   assume metered audio (e.g. scoring that trusts "audio heard"), and do not
+   describe the ladder as tamper-proof anywhere user-facing.
+
+   The retired design, for whoever restores it: a puzzle had a single `AUDIO_CLIP`
+   holding a 30s cut, of which the ladder could unlock 15s, and the stage-N
+   response was a byte-range prefix of it — `bytes=0-(stageByteOffsets[N-1] - 1)`,
+   offsets precomputed at ingest. The client was never handed a longer buffer than
+   it earned, so there was nothing to scrub ahead into. Three consequences that
+   were easy to get wrong, and would be again:
    - **The clip must be CBR MP3**, not AAC-in-MP4. A truncated MP3 is a valid MP3
      (self-describing frames, no global index); a truncated MP4 will not decode.
    - **`storageKey` must be content-addressed** (use `checksum`). The route
-     proxies the range rather than redirecting, but if you ever do sign a direct
-     URL, a key like `blank-space-taylor-swift.mp3` *is* the answer.
-   - **`stageByteOffsets[last]` is NOT the end of the object.** The clip carries a
-     15s backup tail past the final rung, which makes the ladder a data tunable up
-     to 30s (`npm run reslice`, no re-encode) and gives `?reveal=1` more than the
+     proxied the range rather than redirecting, but if you ever do sign a direct
+     URL, a key like `some-song-title.mp3` *is* the answer.
+   - **`stageByteOffsets[last]` is NOT the end of the object.** The clip carried a
+     15s backup tail past the final rung, which made the ladder a data tunable up
+     to 30s (`npm run reslice`, no re-encode) and gave `?reveal=1` more than the
      round could unlock. Anything asserting `offsets[last] == byteSize` predates
      the 30s window and is wrong.
+
+   Code marked `YOUTUBE-ONLY` is the full extent of the switch:
+   `lib/game/selection.ts`, `lib/game/attempt.ts`, `api/runs/route.ts`,
+   `api/runs/[runId]/route.ts`, `api/runs/[runId]/audio/route.ts`,
+   `api/games/[slug]/search/route.ts`, `api/admin/songs/[puzzleId]/audio/route.ts`,
+   `hooks/useMelodleGame.ts`, `lib/storage.ts`, `scripts/ingest.ts`,
+   `scripts/reslice-ladder.ts`. **Artwork still lives in R2** — `lib/storage.ts` is
+   live and its S3 env vars are still required.
 3. **The client does not send `roundIndex`.** `guess` and `skip` act on
    `Run.currentRoundIndex`. Old rounds are unreachable by construction.
-   - The one read that deliberately looks backwards is `audio?reveal=1`, which
-     serves the FULL clip for the latest round whose `outcome != PENDING` — the
-     answer the result panel is already showing. It still takes no round index
-     from the client, and it cannot address a `PENDING` round at all, so it
-     cannot be used to hear ahead. It looks backwards rather than at
-     `currentRoundIndex` because resolving a round advances that index in the
-     same transaction, so the "current" round is already the next one by the
-     time the panel renders.
+   - The read that deliberately looked backwards was `audio?reveal=1` (retired
+     with authority #2): it served the FULL clip for the latest round whose
+     `outcome != PENDING` — the answer the result panel was already showing. It
+     took no round index from the client and could not address a `PENDING` round
+     at all, so it could not be used to hear ahead. It looked backwards rather
+     than at `currentRoundIndex` because resolving a round advances that index in
+     the same transaction, so the "current" round is already the next one by the
+     time the panel renders. `artwork` still works exactly this way and is the
+     live example to copy.
 4. **The client does not send stage, attempt number, or score.** All derived from
    `RunRound` + `Guess` rows.
 5. **Idempotency.** Every attempt carries a client-generated key, unique on
@@ -128,11 +156,11 @@ async — see `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conve
 
 ```
 POST   /api/runs                      → start a run   { gameSlug, mode }
-GET    /api/runs/[runId]              → resume: current round, stage, asset URL
+GET    /api/runs/[runId]              → resume: current round, stage, video id
 POST   /api/runs/[runId]/guess        → { guessedPuzzleId, idempotencyKey }
 POST   /api/runs/[runId]/skip         → { idempotencyKey }
-GET    /api/runs/[runId]/audio        → the current round's earned prefix
-GET    /api/runs/[runId]/audio?reveal=1 → the whole clip, resolved rounds only
+GET    /api/runs/[runId]/audio        → 410 Gone (stored clips retired)
+GET    /api/runs/[runId]/audio?reveal=1 → 410 Gone (stored clips retired)
 POST   /api/runs/[runId]/abandon
 GET    /api/games/[slug]/search       → typeahead over the catalog
 GET    /api/games/[slug]/leaderboard  → ?board=DAILY&period=2026-08-19

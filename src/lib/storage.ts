@@ -12,13 +12,31 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 
-/// Object storage for puzzle audio. S3-compatible so it runs against Cloudflare
+/// Object storage for puzzle assets. S3-compatible so it runs against Cloudflare
 /// R2 in every environment, but nothing here is R2-specific.
 ///
-/// Why R2 and not Vercel Blob: stage audio is served by PROXYING a byte range
-/// through a route handler, because the range has to be authorized against
-/// RunRound.stageReached before any bytes move. That makes every play two hops —
-/// store to function, function to client. R2 charges nothing for the first hop.
+/// YOUTUBE-ONLY: THIS FILE IS STILL LIVE, BUT NOT FOR AUDIO.
+///
+/// Audio clips are retired — every round streams from YouTube — so the byte-range
+/// readers below (`readPrefix`, `readClipPrefix`) have no caller in the running
+/// app. ARTWORK has NOT moved: cover images are still written to R2 by
+/// api/admin/youtube/import and read back by api/runs/[runId]/artwork, so
+/// S3_ENDPOINT / S3_BUCKET / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY are still
+/// required configuration. Do not treat this module as dead and do not unset
+/// those variables.
+///
+/// Live callers:  putObject, objectSize, isStorageConfigured (artwork import),
+///                readObject (artwork serving),
+///                deleteObject, listObjects (purge/verify scripts).
+/// Dormant:       readPrefix, readClipPrefix — see the note on each.
+///
+/// Why R2 and not Vercel Blob (the original reasoning, which applied to audio):
+/// stage audio was served by PROXYING a byte range through a route handler,
+/// because the range had to be authorized against RunRound.stageReached before
+/// any bytes moved. That made every play two hops — store to function, function
+/// to client. R2 charges nothing for the first hop. Artwork is served the same
+/// proxied way, for a different reason: the content-addressed key must never
+/// reach the browser.
 
 // ---------------------------------------------------------------------------
 // Client
@@ -110,14 +128,18 @@ export function isStorageConfigured(): boolean {
 
 /// Fetch `[0, endExclusive)` of an object.
 ///
-/// This is the whole reveal mechanism: stage N of a puzzle is the first
+/// YOUTUBE-ONLY — DORMANT. No runtime caller; scripts/verify-storage.ts still
+/// exercises it to prove the bucket honours Range headers, which is worth keeping
+/// even for an artwork-only bucket.
+///
+/// This was the whole reveal mechanism: stage N of a puzzle was the first
 /// `PuzzleAsset.stageByteOffsets[N - 1]` bytes of its single clip. Only the
-/// requested bytes leave the bucket, so serving stage 1 moves ~6 KB and not the
+/// requested bytes left the bucket, so serving stage 1 moved ~6 KB and not the
 /// whole ~480 KB file.
 ///
-/// Buffered rather than streamed on purpose — the ceiling is one 30s clip at
-/// 128kbps mono, so there is nothing to gain from a stream and a known length
-/// lets the caller set an exact Content-Length.
+/// Buffered rather than streamed on purpose — the ceiling was one 30s clip at
+/// 128kbps mono, so there was nothing to gain from a stream and a known length
+/// let the caller set an exact Content-Length.
 export async function readPrefix(key: string, endExclusive: number): Promise<Uint8Array> {
   if (!Number.isInteger(endExclusive) || endExclusive <= 0) {
     throw new Error(`readPrefix needs a positive integer length, got ${endExclusive}`);
@@ -215,6 +237,12 @@ function warmClip(key: string, fullSize: number): void {
 
 /// Fetch `[0, endExclusive)` of a clip, serving from the in-process cache once
 /// the object has been pulled.
+///
+/// YOUTUBE-ONLY — DORMANT, no callers. This existed because a six-attempt round
+/// walked six growing prefixes of ONE object, and each used to be its own range
+/// request to R2. A YouTube round makes no server request per stage at all, so
+/// there is nothing left to cache. `clipCache` and `warmClip` above are dormant
+/// with it.
 ///
 /// `fullSize` is `PuzzleAsset.byteSize` — the length of the whole stored object.
 /// When it is known we kick off a background warm so later stages of the same
