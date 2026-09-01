@@ -13,23 +13,34 @@ export type UseMultiplayerRoomResult = {
   myPlayerId: string | null
   myRun: { runId: string; runToken: string } | null
   roundResults: RoundResults | null
+  /// ISO timestamp of when the current round's 60s budget runs out — the
+  /// server's own clock (see ROUND_TIMEOUT_MS), not a client guess.
+  roundDeadline: string | null
   finalRankings: FinalRanking[]
   roundProgress: Map<string, { displayName: string; done: boolean; outcome: 'SOLVED' | 'FAILED' | null; points: number | null }>
   chatMessages: ChatMessageData[]
   error: string | null
   markReady: () => void
   startGame: (decadeFilter?: DecadeFilter | null) => void
+  /// Host-only: restarts a COMPLETED room from round 1 with fresh puzzles and
+  /// every score reset. A no-op server-side if called by anyone else.
+  rematch: () => void
   notifyRoundDone: (roundIndex: number, outcome: 'SOLVED' | 'FAILED') => void
   sendChat: (text: string) => void
 }
 
 export function useMultiplayerRoom(code: string | null, playerId: string | null): UseMultiplayerRoomResult {
   const socketRef = useRef<Socket<ServerToClientEvents, ClientToServerEvents> | null>(null)
+  /// Lets room:state tell a rematch's COMPLETED→WAITING bounce apart from a
+  /// mere ready-toggle broadcast (which leaves status at WAITING throughout,
+  /// and must NOT wipe an in-progress lobby chat).
+  const prevRoomStatusRef = useRef<RoomInfo['status'] | null>(null)
   const [phase, setPhase] = useState<MultiplayerPhase>('connecting')
   const [room, setRoom] = useState<RoomInfo | null>(null)
   const [players, setPlayers] = useState<RoomPlayerInfo[]>([])
   const [myRun, setMyRun] = useState<{ runId: string; runToken: string } | null>(null)
   const [roundResults, setRoundResults] = useState<RoundResults | null>(null)
+  const [roundDeadline, setRoundDeadline] = useState<string | null>(null)
   const [finalRankings, setFinalRankings] = useState<FinalRanking[]>([])
   const [roundProgress, setRoundProgress] = useState<Map<string, { displayName: string; done: boolean; outcome: 'SOLVED' | 'FAILED' | null; points: number | null }>>(new Map())
   const [chatMessages, setChatMessages] = useState<ChatMessageData[]>([])
@@ -65,12 +76,20 @@ export function useMultiplayerRoom(code: string | null, playerId: string | null)
       setRoom(r)
       setPlayers(p)
       if (r.status === 'WAITING') {
+        // A rematch (room:rematch) bounces status COMPLETED → WAITING before
+        // the host presses "Start round" again — that's the one WAITING
+        // transition that means "the last game is over," so the lobby opens
+        // on a clean chat instead of the finished game's full transcript.
+        // A ready-toggle broadcast during normal lobby waiting keeps status
+        // at WAITING throughout and never hits this branch.
+        if (prevRoomStatusRef.current === 'COMPLETED') setChatMessages([])
         setPhase('lobby')
       } else if (r.status === 'IN_PROGRESS') {
         setPhase('playing')
       } else if (r.status === 'COMPLETED') {
         setPhase('game_end')
       }
+      prevRoomStatusRef.current = r.status
     })
 
     socket.on('room:error', ({ message }) => {
@@ -85,12 +104,17 @@ export function useMultiplayerRoom(code: string | null, playerId: string | null)
       setPhase('starting')
       setRoundResults(null)
       setRoundProgress(new Map())
+      // A rematch fires this same event as a first game — clear the previous
+      // game's chat log so its "New level start!" message opens a clean
+      // transcript instead of trailing the last game's guesses forever.
+      setChatMessages([])
     })
 
-    socket.on('round:start', () => {
+    socket.on('round:start', ({ deadline }) => {
       setPhase('playing')
       setRoundResults(null)
       setRoundProgress(new Map())
+      setRoundDeadline(deadline)
     })
 
     socket.on('round:progress', ({ playerId: pid, displayName, done, outcome, points }) => {
@@ -129,10 +153,12 @@ export function useMultiplayerRoom(code: string | null, playerId: string | null)
       setPlayers([])
       setMyRun(null)
       setRoundResults(null)
+      setRoundDeadline(null)
       setFinalRankings([])
       setRoundProgress(new Map())
       setChatMessages([])
       setError(null)
+      prevRoomStatusRef.current = null
     }
   }, [code, playerId])
 
@@ -144,6 +170,11 @@ export function useMultiplayerRoom(code: string | null, playerId: string | null)
   const startGame = useCallback((decadeFilter?: DecadeFilter | null) => {
     if (!code) return
     socketRef.current?.emit('room:start', { code, decadeFilter })
+  }, [code])
+
+  const rematch = useCallback(() => {
+    if (!code) return
+    socketRef.current?.emit('room:rematch', { code })
   }, [code])
 
   const notifyRoundDone = useCallback((roundIndex: number, outcome: 'SOLVED' | 'FAILED') => {
@@ -164,12 +195,14 @@ export function useMultiplayerRoom(code: string | null, playerId: string | null)
     myPlayerId: playerId,
     myRun,
     roundResults,
+    roundDeadline,
     finalRankings,
     roundProgress,
     chatMessages,
     error,
     markReady,
     startGame,
+    rematch,
     notifyRoundDone,
     sendChat,
   }

@@ -5,6 +5,7 @@ import { RoomChat, type ChatMessage } from "@/components/RoomChat";
 import { GuessAutocomplete } from "@/components/GuessAutocomplete";
 import { AttemptTimeline } from "@/components/AttemptTimeline";
 import { CoverArt } from "@/components/CoverArt";
+import { PlayerBar } from "@/components/PlayerBar";
 import { toPlayerView } from "@/lib/multiplayer/player-view";
 import { previewPoints } from "@/lib/game/scoring/preview";
 import { newIdempotencyKey, type CatalogMatch, type RoundHint } from "@/lib/api/runs";
@@ -28,11 +29,6 @@ type AttemptOutcome = {
   currentStreak: number;
   hint: RoundHint | null;
 };
-
-// Extra thinking time tacked onto each stage's own clip length before the
-// round auto-advances — e.g. a 400ms clip auto-skips 4.4s later, no click
-// required. Mirrors the pacing the old local-practice preview used.
-const AUTO_SKIP_BUFFER_MS = 4000;
 
 async function callRun(
   path: "guess" | "skip",
@@ -60,14 +56,13 @@ async function callRun(
 // come from the socket, driven by every player's real attempts landing
 // server-side (see resolveRound in socket-handler.ts).
 export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLadder, maxAttempts, onLeave }: Props) {
-  const { phase, room, players, myPlayerId, myRun, roundResults, finalRankings, roundProgress, chatMessages, sendChat, notifyRoundDone } = mp;
+  const { phase, room, players, myPlayerId, myRun, roundResults, roundDeadline, finalRankings, roundProgress, chatMessages, sendChat, notifyRoundDone, rematch } = mp;
 
   const views = players.map((p) => toPlayerView(p, myPlayerId));
   const sortedLeaderboard = [...views].sort((a, b) => b.score - a.score);
 
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioLoading, setAudioLoading] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [stageReached, setStageReached] = useState(1);
   const [guesses, setGuesses] = useState<GuessRecord[]>([]);
   const [guessedPuzzleIds, setGuessedPuzzleIds] = useState<Set<string>>(new Set());
@@ -77,8 +72,8 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [currentStreak, setCurrentStreak] = useState(0);
   const [hint, setHint] = useState<RoundHint | null>(null);
+  const [nextRoundSecondsLeft, setNextRoundSecondsLeft] = useState(0);
 
-  const audioElRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const generationRef = useRef(0);
   const roundIndexRef = useRef(room?.currentRound ?? 1);
@@ -130,33 +125,6 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, room?.currentRound, myRun?.runId]);
 
-  useEffect(() => {
-    if (!audioUrl) return;
-    const audio = new Audio(audioUrl);
-    audio.preload = "auto";
-    audioElRef.current = audio;
-    const onPlay = () => setIsPlaying(true);
-    const onPauseOrEnd = () => setIsPlaying(false);
-    audio.addEventListener("play", onPlay);
-    audio.addEventListener("pause", onPauseOrEnd);
-    audio.addEventListener("ended", onPauseOrEnd);
-    void audio.play().catch(() => {});
-    return () => {
-      audio.pause();
-      audio.removeEventListener("play", onPlay);
-      audio.removeEventListener("pause", onPauseOrEnd);
-      audio.removeEventListener("ended", onPauseOrEnd);
-      audioElRef.current = null;
-    };
-  }, [audioUrl]);
-
-  function togglePlayback() {
-    const audio = audioElRef.current;
-    if (!audio) return;
-    if (audio.paused) void audio.play();
-    else audio.pause();
-  }
-
   async function applyResult(res: AttemptOutcome | null, roundIndex: number) {
     if (!res) return;
     setStageReached(res.stageReached);
@@ -174,6 +142,22 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
       }
     }
   }
+
+  // Live countdown to the next round, driven by the server's own
+  // nextRoundAt timestamp rather than a guessed client-side delay — the
+  // server is the one actually scheduling round:start, so it's the only
+  // thing that can say exactly when that fires.
+  useEffect(() => {
+    if (phase !== "round_results" || !roundResults) return;
+
+    const target = new Date(roundResults.nextRoundAt).getTime();
+    const tick = () => {
+      setNextRoundSecondsLeft(Math.max(0, Math.ceil((target - Date.now()) / 1000)));
+    };
+    tick();
+    const interval = window.setInterval(tick, 250);
+    return () => window.clearInterval(interval);
+  }, [phase, roundResults]);
 
   const handleGuess = useCallback(
     async (match: CatalogMatch) => {
@@ -208,37 +192,31 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myRun, roundDone, pendingAction, room]);
 
-  // Auto-advance through the reveal ladder — no manual Skip click required.
-  // Each stage's own clip length (plus a thinking buffer) is how long the
-  // round waits before calling the REAL skip() and moving to the next, longer
-  // clip; that's a genuine attempt spent server-side, same as clicking Skip
-  // yourself. Re-armed every time stageReached changes, and stopped for good
-  // once roundDone flips (the round has resolved, one way or another).
-  // handleSkip is recreated whenever `room` changes — which happens on every
-  // room:state broadcast, including ones caused by OTHER players finishing
-  // their own round. Calling it through a ref (rather than depending on it
-  // directly) keeps this timer from being torn down and re-armed every time
-  // someone else in the room does something.
-  const handleSkipRef = useRef(handleSkip);
+  // Display-only countdown to the round's real, server-enforced 60s budget
+  // (ROUND_TIMEOUT_MS in socket-handler.ts) — nothing here forces a skip.
+  // Guessing wrong or clicking Skip is the only way to move a stage forward
+  // now; if the clock reaches 0 with the round still open, the server itself
+  // force-resolves it (forceResolveStragglers), which arrives on this client
+  // as the normal round:results broadcast.
+  const [roundSecondsLeft, setRoundSecondsLeft] = useState<number | null>(null);
   useEffect(() => {
-    handleSkipRef.current = handleSkip;
-  }, [handleSkip]);
-
-  useEffect(() => {
-    if (!myRun || roundDone || pendingAction) return;
-    const waitMs = (revealLadder[stageReached - 1] ?? 1500) + AUTO_SKIP_BUFFER_MS;
-    const timer = window.setTimeout(() => {
-      void handleSkipRef.current();
-    }, waitMs);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myRun?.runId, roundDone, pendingAction, stageReached, revealLadder]);
+    if (!roundDeadline || roundDone) return;
+    const target = new Date(roundDeadline).getTime();
+    const tick = () => {
+      setRoundSecondsLeft(Math.max(0, Math.ceil((target - Date.now()) / 1000)));
+    };
+    tick();
+    const interval = window.setInterval(tick, 250);
+    return () => window.clearInterval(interval);
+  }, [roundDeadline, roundDone]);
 
   // Exact, not estimated: the real formula (scoring/v1.ts) keys off stage
   // reached, round depth and streak — never a clock — so this is what
   // scoreSolvedRound would actually return if you solved on this exact
   // attempt, mirrored client-side for display only.
   const potentialPoints = previewPoints(stageReached, room?.currentRound ?? 1, currentStreak);
+  const revealMs = revealLadder[stageReached - 1] ?? revealLadder[0] ?? 0;
+  const totalMs = revealLadder[revealLadder.length - 1] ?? 0;
 
   // The "guessed correctly" / "ran out of attempts" announcements are already
   // in here — the server broadcasts them as real room:chat system messages
@@ -282,7 +260,7 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
         </div>
         <button
           type="button"
-          onClick={() => setShowLeaveConfirm(true)}
+          onClick={rematch}
           className="mt-5 h-11 w-full rounded-[7px] bg-(--signal) text-sm font-bold text-(--signal-ink) transition-colors duration-200 hover:bg-[#ffd071]"
         >
           Done
@@ -295,7 +273,7 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
 
   // phase === 'playing'
   return (
-    <div className="fixed inset-0 z-40 overflow-y-auto bg-(--bg) text-(--text)">
+    <div className="fixed inset-0 z-40 overflow-y-auto no-scrollbar bg-(--bg) text-(--text)">
       <div className="mx-auto flex w-full max-w-[1180px] flex-col px-4 pb-12 pt-5 sm:px-6 sm:pb-16 sm:pt-8">
         <header className="flex flex-col gap-3.5 border-b border-(--hairline) pb-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -367,7 +345,7 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
             {!roundDone && (
               <div className="flex flex-wrap items-center gap-5">
                 <PointsRing potentialPoints={potentialPoints} stageReached={stageReached} maxAttempts={maxAttempts} />
-                <div>
+                <div className="min-w-0 flex-1">
                   <p className="whitespace-nowrap text-xs text-(--text-dim)">
                     <b className="text-(--text)">Fewer attempts score higher.</b> Skips and misses trim the points.
                   </p>
@@ -379,41 +357,22 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
                     ))}
                   </div>
                 </div>
+                {roundSecondsLeft !== null && <RoundTimerBadge secondsLeft={roundSecondsLeft} />}
               </div>
             )}
 
-            <div className="flex items-center gap-4 border-t border-(--hairline) pt-4">
-              <button
-                type="button"
-                onClick={togglePlayback}
-                disabled={audioLoading || !audioUrl}
-                className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-(--signal) text-(--signal-ink) transition-colors duration-200 hover:bg-[#ffd071] disabled:cursor-wait disabled:opacity-45"
-                aria-label={isPlaying ? "Stop the clip" : "Play the clip"}
-              >
-                {audioLoading ? (
-                  <svg width="20" height="20" viewBox="0 0 20 20" className="animate-spin" fill="none" aria-hidden="true">
-                    <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="2.5" strokeOpacity="0.3" />
-                    <path d="M17 10a7 7 0 0 0-7-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-                  </svg>
-                ) : isPlaying ? (
-                  <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <rect x="4" y="3" width="4" height="14" rx="1" />
-                    <rect x="12" y="3" width="4" height="14" rx="1" />
-                  </svg>
-                ) : (
-                  <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path d="M5 3.5v13l11-6.5-11-6.5z" />
-                  </svg>
-                )}
-              </button>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-(--text)">
-                  {audioLoading ? "Tuning the clip…" : isPlaying ? "Listen closely" : "Hear the clip"}
-                </p>
-                <p className="mt-0.5 text-xs text-(--text-faint)">Everyone in the room hears the same clip.</p>
-              </div>
+            <div className="flex flex-col gap-2.5 border-t border-(--hairline) pt-4">
+              <PlayerBar
+                audioUrl={audioUrl}
+                revealMs={revealMs}
+                totalMs={totalMs}
+                ladder={revealLadder}
+                loading={audioLoading}
+                waveformSeed={`${myRun?.runId ?? "run"}:${room?.currentRound ?? 1}`}
+                promptSubtitle="Everyone in the room hears the same clip."
+              />
               {lastPoints !== null && (
-                <span className="shrink-0 rounded-[4px] border border-(--success)/40 bg-(--success)/12 px-2.5 py-1.5 font-mono text-[11px] font-bold text-(--success)">
+                <span className="self-start rounded-[4px] border border-(--success)/40 bg-(--success)/12 px-2.5 py-1.5 font-mono text-[11px] font-bold text-(--success)">
                   +{lastPoints} pts
                 </span>
               )}
@@ -578,7 +537,9 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
             <div className="mt-5 flex flex-col items-center border-t border-(--hairline) pt-4">
               <p className="flex items-center gap-2 text-center text-xs text-(--text-faint)">
                 <span className="h-2 w-2 rounded-full bg-(--signal) animate-ping" />
-                Next round starting soon…
+                {roundResults.roundIndex >= (room?.totalRounds ?? roundResults.roundIndex)
+                  ? `Final results in ${nextRoundSecondsLeft}s…`
+                  : `Next round in ${nextRoundSecondsLeft}s…`}
               </p>
             </div>
           </div>
@@ -669,6 +630,44 @@ function PointsRing({
   );
 }
 
+// Deliberately NOT another ring — a digital stopwatch readout instead, so it
+// doesn't compete visually with PointsRing for the same "circular gauge"
+// read. Depletes on the real clock, switching to the miss color in the
+// closing 10 seconds as an urgency cue.
+function RoundTimerBadge({ secondsLeft }: { secondsLeft: number }) {
+  const urgent = secondsLeft <= 10;
+  const minutes = Math.floor(secondsLeft / 60);
+  const seconds = secondsLeft % 60;
+
+  return (
+    <div
+      className={`flex shrink-0 items-center gap-2.5 rounded-[10px] border px-3.5 py-2.5 transition-colors duration-300 ${
+        urgent ? "border-(--miss)/50 bg-(--miss)/10" : "border-(--hairline) bg-[#10131e]"
+      }`}
+    >
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 20 20"
+        fill="none"
+        className={urgent ? "text-(--miss) animate-pulse" : "text-(--text-faint)"}
+        aria-hidden="true"
+      >
+        <circle cx="10" cy="10" r="7.5" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M10 6v4l2.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      <div className="flex flex-col leading-none">
+        <span className={`font-mono text-[22px] font-black tabular-nums ${urgent ? "text-(--miss)" : "text-(--signal)"}`}>
+          {minutes}:{seconds.toString().padStart(2, "0")}
+        </span>
+        <span className="mt-0.5 font-mono text-[8px] font-semibold uppercase tracking-[0.16em] text-(--text-faint)">
+          Round time
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // Three real hint tiers (decade, genre, first letter), driven entirely by the
 // server's own RoundHint (see deriveHint in lib/game/hint.ts) — a field is
 // null until the server has actually decided you've earned it, so "locked"
@@ -717,7 +716,7 @@ function HintLadder({ hint }: { hint: RoundHint | null }) {
 
 function RoundShell({ roomCode, title, onLeave, children }: { roomCode: string; title: string; onLeave: () => void; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 z-40 overflow-y-auto bg-(--bg) text-(--text)">
+    <div className="fixed inset-0 z-40 overflow-y-auto no-scrollbar bg-(--bg) text-(--text)">
       <div className="mx-auto flex w-full max-w-[640px] flex-col px-4 pb-12 pt-8 sm:px-6">
         <div className="flex items-start justify-between gap-3">
           <div>

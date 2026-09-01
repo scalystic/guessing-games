@@ -45,6 +45,10 @@ export type RoundResults = {
     releaseYear: number | null
   }
   playerResults: RoundPlayerResult[]
+  /// ISO timestamp of when `round:start` (or `game:end`) fires for this
+  /// result — lets the client render a live countdown instead of guessing at
+  /// the server's internal delay.
+  nextRoundAt: string
 }
 
 export type FinalRanking = {
@@ -72,7 +76,10 @@ export type ServerToClientEvents = {
   'room:error': (data: { message: string }) => void
   'player:credentials': (data: { runId: string; runToken: string }) => void
   'game:started': (data: { totalRounds: number; roundIndex: number }) => void
-  'round:start': (data: { roundIndex: number; totalRounds: number }) => void
+  /// `deadline` is an ISO timestamp of when this round's 60s budget runs out
+  /// (the same clock the server enforces via ROUND_TIMEOUT_MS) — the client
+  /// renders a countdown from it rather than assuming a duration.
+  'round:start': (data: { roundIndex: number; totalRounds: number; deadline: string }) => void
   'round:progress': (data: { playerId: string; displayName: string; done: boolean; outcome: 'SOLVED' | 'FAILED' | null; points: number | null }) => void
   'round:results': (data: RoundResults) => void
   'game:end': (data: { rankings: FinalRanking[] }) => void
@@ -87,6 +94,10 @@ export type ClientToServerEvents = {
   /// decadeFilter is the host's choice, made once right before starting —
   /// null/omitted means every era, same "no filter" meaning solo play uses.
   'room:start': (data: { code: string; decadeFilter?: DecadeFilter | null }) => void
+  /// Host-only: restarts a COMPLETED room with fresh puzzles and every
+  /// player's score/rounds reset to zero — same room and players, round 1
+  /// again.
+  'room:rematch': (data: { code: string }) => void
   'round:done': (data: { code: string; roundIndex: number; outcome: 'SOLVED' | 'FAILED' }) => void
   'room:chat': (data: { code: string; text: string }) => void
 }
