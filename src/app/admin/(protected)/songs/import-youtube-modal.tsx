@@ -14,12 +14,28 @@ type VideoRow = YoutubeVideoItem & {
   selected: boolean;
 };
 
-type ImportStatus = "idle" | "pending" | "done" | "skipped" | "already_exists" | "stopped" | "error";
+type ImportStatus =
+  | "idle"
+  | "pending"
+  | "done"
+  /// Imported, but iTunes had no match — year, genre, album and duration are
+  /// missing and the names came from the video title.
+  | "no_itunes"
+  /// Imported off a weak iTunes match; the names are worth an eye.
+  | "low_confidence"
+  | "already_exists"
+  | "stopped"
+  | "error";
 
 type ImportResult = {
   videoId: string;
   status: ImportStatus;
   error?: string;
+  /// What actually landed in the catalog. iTunes' canonical names usually
+  /// differ from the video title, so showing the video title here would
+  /// misreport what was saved.
+  savedTitle?: string;
+  savedArtist?: string;
 };
 
 type Step = "url" | "select" | "importing" | "done";
@@ -198,12 +214,22 @@ export function ImportYoutubeModal({ onImported }: Props) {
           },
           { signal: controller.signal },
         );
-        const alreadyExists = res.data?.data?.alreadyExists === true;
-        const skipped = res.data?.data?.skipped === true;
+        const data = res.data?.data ?? {};
+        const alreadyExists = data.alreadyExists === true;
+        const itunes = data.itunes as { matched?: boolean; lowConfidence?: boolean } | undefined;
+
+        const status: ImportStatus = alreadyExists
+          ? "already_exists"
+          : itunes?.matched === false
+            ? "no_itunes"
+            : itunes?.lowConfidence
+              ? "low_confidence"
+              : "done";
+
         setImportResults((prev) =>
           prev.map((r) =>
             r.videoId === video.videoId
-              ? { ...r, status: alreadyExists ? "already_exists" : skipped ? "skipped" : "done" }
+              ? { ...r, status, savedTitle: data.title, savedArtist: data.artist }
               : r
           )
         );
@@ -277,14 +303,20 @@ export function ImportYoutubeModal({ onImported }: Props) {
                   {step === "select" && `${videos.length} songs found — review details and select which to import.`}
                   {step === "importing" && "Saving songs to catalog…"}
                   {step === "done" && (() => {
-                    const done = importResults.filter((r) => r.status === "done").length;
-                    const skipped = importResults.filter((r) => r.status === "skipped").length;
-                    const alreadyExists = importResults.filter((r) => r.status === "already_exists").length;
-                    const stopped = importResults.filter((r) => r.status === "stopped").length;
+                    const count = (...statuses: ImportStatus[]) =>
+                      importResults.filter((r) => statuses.includes(r.status)).length;
+                    const done = count("done", "no_itunes", "low_confidence");
+                    const noItunes = count("no_itunes");
+                    const lowConfidence = count("low_confidence");
+                    const alreadyExists = count("already_exists");
+                    const stopped = count("stopped");
+                    const failed = count("error");
                     const wasStopped = stopped > 0;
                     const parts = [`${done} added`];
                     if (alreadyExists > 0) parts.push(`${alreadyExists} already in catalog`);
-                    if (skipped > 0) parts.push(`${skipped} skipped (no iTunes match)`);
+                    if (noItunes > 0) parts.push(`${noItunes} without iTunes data`);
+                    if (lowConfidence > 0) parts.push(`${lowConfidence} to double-check`);
+                    if (failed > 0) parts.push(`${failed} failed`);
                     if (stopped > 0) parts.push(`${stopped} cancelled`);
                     return `${wasStopped ? "Import stopped" : "Import complete"} — ${parts.join(", ")}.`;
                   })()}
@@ -356,8 +388,8 @@ export function ImportYoutubeModal({ onImported }: Props) {
                         Select all ({videos.length})
                       </span>
                     </label>
-                    <p className="text-xs text-(--text-faint)">
-                      iTunes fills year, genre &amp; duration. Hook start is auto-detected from the audio. Songs with no iTunes match are skipped.
+                    <p className="max-w-xs text-right text-xs text-(--text-faint)">
+                      iTunes supplies the clean title, artist, year, genre &amp; duration; hook start is auto-detected from the audio. A song iTunes doesn&apos;t know is still imported, using the video title.
                     </p>
                   </div>
 
@@ -452,10 +484,10 @@ export function ImportYoutubeModal({ onImported }: Props) {
                         )}
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium text-(--text)">
-                            {video.editedTitle || video.title}
+                            {result.savedTitle || video.editedTitle || video.title}
                           </p>
                           <p className="truncate text-xs text-(--text-dim)">
-                            {video.editedArtist || video.channelTitle}
+                            {result.savedArtist || video.editedArtist || video.channelTitle}
                           </p>
                           {result.status === "error" && result.error && (
                             <p className="mt-0.5 text-xs text-red-500">{result.error}</p>
@@ -557,10 +589,17 @@ function StatusBadge({ status }: { status: ImportStatus }) {
       </span>
     );
   }
-  if (status === "skipped") {
+  if (status === "no_itunes") {
     return (
       <span className="shrink-0 text-xs font-medium text-amber-500 dark:text-amber-400">
-        — No iTunes match
+        ✓ Imported — no iTunes data
+      </span>
+    );
+  }
+  if (status === "low_confidence") {
+    return (
+      <span className="shrink-0 text-xs font-medium text-amber-500 dark:text-amber-400">
+        ✓ Imported — check names
       </span>
     );
   }
