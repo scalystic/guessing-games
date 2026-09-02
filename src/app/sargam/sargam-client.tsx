@@ -16,6 +16,7 @@ import { Modal } from "@/components/Modal";
 import { StatsList } from "@/components/StatsList";
 import { RoundHistoryList } from "@/components/RoundHistoryList";
 import { MultiplayerEntry } from "@/components/MultiplayerEntry";
+import { RunErrorDialog } from "@/components/RunErrorDialog";
 
 const FREE_GUEST_ROUNDS = 5;
 
@@ -76,8 +77,8 @@ type HeaderActionProps = {
 
 const ERA_OPTIONS: { value: DecadeFilter | null; label: string }[] = [
   { value: null, label: "All" },
-  { value: "NINETIES", label: "90's" },
-  { value: "TWO_THOUSANDS", label: "20's" },
+  { value: "NINETIES", label: "Old" },
+  { value: "TWO_THOUSANDS", label: "New" },
 ];
 
 function EraFilterControl({
@@ -413,7 +414,7 @@ function TodaysChallengeModal({
   );
 }
 
-export default function Home({ user, game: config }: { user: CurrentUser; game: GameDetail }) {
+export default function Sargam({ user, game: config }: { user: CurrentUser; game: GameDetail }) {
   const [showHelp, setShowHelp] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showAuthGate, setShowAuthGate] = useState(false);
@@ -430,6 +431,9 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
   const guestLimitReached = isGuest && game.roundsPlayed >= FREE_GUEST_ROUNDS;
   const resolved = game.status !== "PENDING";
   const nextRevealMs = game.revealLadder[game.stage] ?? null;
+  /// A failed start leaves the deck empty, same as a fresh visit — so the
+  /// dismissed error falls back to the tape picker instead of a dead player.
+  const awaitingTape = game.phase === "selecting" || game.phase === "error";
 
   const excludePuzzleIds = useMemo(
     () =>
@@ -468,8 +472,12 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
                 ? "Revealing the mystery track…"
                 : `You have ${formatSeconds(game.revealMs)} seconds. Know it?`;
 
+  // min-h-full, not min-h-screen: the root layout now renders a footer below
+  // <main>, so filling the whole viewport here would guarantee a scrollbar on
+  // every game screen. Full height of the flex-1 <main> is what "as tall as the
+  // space available" actually means — the same pattern the auth layout uses.
   return (
-    <div className="page-backdrop min-h-screen text-(--text)">
+    <div className="page-backdrop min-h-full text-(--text)">
       <div className="mx-auto flex w-full max-w-[760px] flex-col px-4 pb-12 pt-5 sm:px-6 sm:pb-16 sm:pt-8">
         <header className="flex items-center justify-between gap-4 border-b border-(--hairline) pb-5">
           <div className="min-w-0">
@@ -518,7 +526,7 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
           />
         </section>
 
-        {game.error ? (
+        {game.error && game.phase !== "error" ? (
           <div className="mt-5 flex items-start gap-3 rounded-[8px] border border-(--miss) bg-(--surface) px-4 py-3 text-sm text-(--text)" role="alert">
             <svg className="mt-0.5 shrink-0 text-(--miss)" width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
               <path d="M10 3l7 13H3L10 3z" strokeLinejoin="round" />
@@ -527,10 +535,10 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
             <span className="flex-1 leading-5">{game.error}</span>
             <button
               type="button"
-              onClick={game.phase === "error" ? game.restartRun : game.dismissError}
+              onClick={game.dismissError}
               className="shrink-0 text-xs font-bold text-(--text-dim) underline decoration-(--hairline) underline-offset-4 hover:text-(--text)"
             >
-              {game.phase === "error" ? "Try again" : "Dismiss"}
+              Dismiss
             </button>
           </div>
         ) : null}
@@ -556,11 +564,9 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
             ladder={game.revealLadder}
             loading={game.audioLoading || game.phase === "starting"}
             waveformSeed={`${game.runId ?? "run"}:${game.roundIndex}`}
-            onPlayRequested={game.phase === "selecting" ? () => setShowEraDialog(true) : undefined}
-            promptTitle={game.phase === "selecting" ? "Load a tape to begin" : undefined}
-            promptSubtitle={
-              game.phase === "selecting" ? "Pick an era and the round starts." : undefined
-            }
+            onPlayRequested={awaitingTape ? () => setShowEraDialog(true) : undefined}
+            promptTitle={awaitingTape ? "Load a tape to begin" : undefined}
+            promptSubtitle={awaitingTape ? "Pick an era and the round starts." : undefined}
           />
 
           <div className="mt-5">
@@ -676,6 +682,14 @@ export default function Home({ user, game: config }: { user: CurrentUser; game: 
             achievements={game.achievements}
           />
         </Modal>
+      ) : null}
+
+      {game.error && game.phase === "error" ? (
+        <RunErrorDialog
+          message={game.error}
+          onRetry={game.restartRun}
+          onClose={game.dismissError}
+        />
       ) : null}
 
       {showEraDialog ? (

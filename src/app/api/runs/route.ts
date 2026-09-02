@@ -206,7 +206,7 @@ export async function POST(request: Request): Promise<Response> {
       return jsonError(
         503,
         "catalog_empty",
-        "No playable puzzles are available right now.",
+        "No playable puzzles are available right now. Please come back after some time.",
       );
     }
 

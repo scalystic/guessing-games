@@ -702,9 +702,9 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
   };
 }
 
-/// Prefer the server's message — "No playable puzzles are available right now."
-/// is far more useful than a generic failure, and the API only ever returns
-/// messages that are safe to show.
+/// Prefer the server's message — "No playable puzzles are available right
+/// now. Please come back after some time." is far more useful than a generic
+/// failure, and the API only ever returns messages that are safe to show.
 function messageFor(cause: unknown, fallback: string): string {
   if (cause instanceof ApiError) return cause.message;
   return fallback;

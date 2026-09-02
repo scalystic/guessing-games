@@ -12,6 +12,7 @@ import { ResultPanel } from "@/components/ResultPanel";
 import { ProfileMenu } from "@/components/ProfileMenu";
 import { Modal } from "@/components/Modal";
 import { HowToPlayList } from "@/components/HowToPlayList";
+import { RunErrorDialog } from "@/components/RunErrorDialog";
 
 function formatSeconds(milliseconds: number) {
   const seconds = milliseconds / 1000;
@@ -70,8 +71,11 @@ function PageShell({
   onHelpClose: () => void;
   children: React.ReactNode;
 }) {
+  // min-h-full, not min-h-screen — same reason as the Sargam shell: the root
+  // layout renders a footer below <main>, so pinning this to the viewport
+  // height would put a scrollbar on every daily-challenge screen.
   return (
-    <div className="page-backdrop min-h-screen text-(--text)">
+    <div className="page-backdrop min-h-full text-(--text)">
       <div className="mx-auto flex w-full max-w-[760px] flex-col px-4 pb-12 pt-5 sm:px-6 sm:pb-16 sm:pt-8">
         <header className="flex items-center justify-between gap-4 border-b border-(--hairline) pb-5">
           <div className="min-w-0">
@@ -293,7 +297,15 @@ function DailyGame({
         </div>
       )}
 
-      {game.error ? (
+      {game.error && game.phase === "error" ? (
+        <RunErrorDialog
+          message={game.error}
+          onRetry={game.restartRun}
+          onClose={game.dismissError}
+        />
+      ) : null}
+
+      {game.error && game.phase !== "error" ? (
         <div className="mt-5 flex items-start gap-3 rounded-[8px] border border-(--miss) bg-(--surface) px-4 py-3 text-sm text-(--text)" role="alert">
           <svg className="mt-0.5 shrink-0 text-(--miss)" width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
             <path d="M10 3l7 13H3L10 3z" strokeLinejoin="round" />
