@@ -25,7 +25,7 @@ function nextId() {
   return `m${msgSeq}`;
 }
 
-export function RoomLobby({ mp, roomCode, onLeave }: Props) {
+export function RoomLobby({ mp, roomCode, onLeave }: Readonly<Props>) {
   const { phase, room, players, myPlayerId, error, chatMessages, markReady, startGame, sendChat } = mp;
 
   const myPlayer = players.find((p) => p.playerId === myPlayerId);
