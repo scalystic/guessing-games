@@ -3,6 +3,7 @@ import { getAdminUser } from "@/lib/admin/auth";
 import { jsonError, jsonOk, internalErrorJson } from "@/lib/api/response";
 import { z } from "zod";
 import { randomUUID } from "crypto";
+import { DAILY_REPEAT_COOLDOWN_DAYS, findRecentDailyUses } from "@/lib/game/daily-repeat";
 
 export const dynamic = "force-dynamic";
 
@@ -121,6 +122,21 @@ export async function POST(request: Request): Promise<Response> {
     });
     if (found.length < puzzleIds.length) {
       return jsonError(422, "validation_error", "One or more puzzleIds are invalid.");
+    }
+
+    // Mirrors the search endpoint's disabled-in-picker state: the picker can
+    // only stop a click, not a request built by hand, so the rule is
+    // re-checked here before anything is written.
+    const recentUses = await findRecentDailyUses(puzzleIds, dayKey);
+    if (recentUses.size > 0) {
+      return jsonError(
+        422,
+        "songs_recently_used",
+        `${recentUses.size} song(s) were already used in the daily rotation within the last ${DAILY_REPEAT_COOLDOWN_DAYS} days.`,
+        Object.fromEntries(
+          [...recentUses].map(([puzzleId, usedDayKey]) => [puzzleId, [`Used on ${usedDayKey}`]]),
+        ),
+      );
     }
 
     const challenge = await prisma.dailyChallenge.create({

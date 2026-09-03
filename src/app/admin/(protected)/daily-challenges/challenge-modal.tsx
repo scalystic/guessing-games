@@ -9,6 +9,9 @@ type SongResult = {
   artist: string;
   album: string | null;
   externalId: string | null;
+  /// dayKey of the nearest daily challenge already using this song within the
+  /// 30-day no-repeat window, or null if it's free to pick.
+  recentDailyUseDayKey: string | null;
 };
 
 type RoundSlot = {
@@ -25,6 +28,11 @@ type Props = {
 };
 
 const DEFAULT_ROUNDS = 5;
+
+function formatShortDate(dayKey: string): string {
+  const [y, m, d] = dayKey.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+}
 
 export function ChallengeModal({ challenge, onClose, onSaved }: Props) {
   const isEdit = challenge !== null;
@@ -70,7 +78,9 @@ export function ChallengeModal({ challenge, onClose, onSaved }: Props) {
     }
     searchTimers.current[roundIndex] = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/admin/songs/search?q=${encodeURIComponent(q)}&limit=8`);
+        const params = new URLSearchParams({ q, limit: "8", dayKey });
+        if (isEdit) params.set("excludeChallengeId", challenge.id);
+        const res = await fetch(`/api/admin/songs/search?${params.toString()}`);
         const json = await res.json();
         if (res.ok) {
           setResults((prev) => ({ ...prev, [roundIndex]: json.data ?? [] }));
@@ -321,25 +331,45 @@ export function ChallengeModal({ challenge, onClose, onSaved }: Props) {
                           {searchOpen[round.roundIndex] &&
                             (results[round.roundIndex] ?? []).length > 0 && (
                               <div className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-xl border border-(--hairline) bg-(--surface-strong) shadow-xl">
-                                {(results[round.roundIndex] ?? []).map((song) => (
-                                  <button
-                                    key={song.puzzleId}
-                                    type="button"
-                                    onMouseDown={() => selectSong(round.roundIndex, song)}
-                                    className="flex w-full items-center gap-3 px-3 py-2 text-left transition hover:bg-(--surface-hover)"
-                                  >
-                                    <div className="min-w-0">
-                                      <p className="truncate text-sm font-medium text-(--text)">
-                                        {song.title}
-                                      </p>
-                                      <p className="truncate text-xs text-(--text-dim)">
-                                        {song.artist}
-                                        {song.album ? ` · ${song.album}` : ""}
-                                        {song.externalId ? " · YouTube" : ""}
-                                      </p>
-                                    </div>
-                                  </button>
-                                ))}
+                                {(results[round.roundIndex] ?? []).map((song) => {
+                                  const blocked = song.recentDailyUseDayKey !== null;
+                                  return (
+                                    <button
+                                      key={song.puzzleId}
+                                      type="button"
+                                      disabled={blocked}
+                                      onMouseDown={() => {
+                                        if (!blocked) selectSong(round.roundIndex, song);
+                                      }}
+                                      title={
+                                        blocked
+                                          ? `Used in the daily rotation on ${formatShortDate(song.recentDailyUseDayKey!)} — repeats are blocked within 30 days`
+                                          : undefined
+                                      }
+                                      className={`flex w-full items-center gap-3 px-3 py-2 text-left transition ${
+                                        blocked
+                                          ? "cursor-not-allowed opacity-40"
+                                          : "hover:bg-(--surface-hover)"
+                                      }`}
+                                    >
+                                      <div className="min-w-0 flex-1">
+                                        <p className="truncate text-sm font-medium text-(--text)">
+                                          {song.title}
+                                        </p>
+                                        <p className="truncate text-xs text-(--text-dim)">
+                                          {song.artist}
+                                          {song.album ? ` · ${song.album}` : ""}
+                                          {song.externalId ? " · YouTube" : ""}
+                                        </p>
+                                      </div>
+                                      {blocked && (
+                                        <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-500">
+                                          Used {formatShortDate(song.recentDailyUseDayKey!)}
+                                        </span>
+                                      )}
+                                    </button>
+                                  );
+                                })}
                               </div>
                             )}
                         </div>

@@ -107,6 +107,9 @@ export function PlayerBar({
   const ytReadyRef = useRef(false);
   const ytTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ytVideoIdRef = useRef<string | null>(null);
+  /// Paired with ytVideoIdRef so a not-yet-ready player can still land on the
+  /// right offset once onReady fires, even if the round changed again first.
+  const ytHookStartMsRef = useRef(0);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [progressMs, setProgressMs] = useState(0);
@@ -134,30 +137,30 @@ export function PlayerBar({
     if (!youtubeVideoId) return;
 
     let cancelled = false;
+    const targetVideoId = youtubeVideoId;
+    ytVideoIdRef.current = targetVideoId;
+    ytHookStartMsRef.current = hookStartMs;
 
     loadYouTubeAPI(() => {
       if (cancelled || !ytContainerRef.current || !window.YT) return;
 
-      if (ytPlayerRef.current && ytVideoIdRef.current === youtubeVideoId) {
-        // Same video, player already created — nothing to do.
-        return;
-      }
-
-      if (ytPlayerRef.current && ytVideoIdRef.current !== youtubeVideoId) {
-        // Different video — cue it into the existing player WITHOUT auto-playing.
-        ytVideoIdRef.current = youtubeVideoId;
-        ytReadyRef.current = false;
-        ytPlayerRef.current.pauseVideo();
-        ytPlayerRef.current.cueVideoById({ videoId: youtubeVideoId, startSeconds: hookStartMs / 1000 });
-        ytReadyRef.current = true;
+      if (ytPlayerRef.current) {
+        // A player already exists for an earlier round. If it's finished
+        // initializing, land it on the latest target now. If not — its own
+        // `onReady` (below) hasn't fired yet, and the object it returned is a
+        // stub without real methods attached; calling pauseVideo/cueVideoById
+        // on it throws. onReady re-syncs to ytVideoIdRef/ytHookStartMsRef once
+        // it does fire, so the target set just above is never lost.
+        if (ytReadyRef.current) {
+          ytPlayerRef.current.pauseVideo();
+          ytPlayerRef.current.cueVideoById({ videoId: targetVideoId, startSeconds: hookStartMs / 1000 });
+        }
         return;
       }
 
       // First time — create the player.
-      ytVideoIdRef.current = youtubeVideoId;
-      ytReadyRef.current = false;
       ytPlayerRef.current = new window.YT.Player(ytContainerRef.current, {
-        videoId: youtubeVideoId,
+        videoId: targetVideoId,
         playerVars: {
           autoplay: 0,
           controls: 0,
@@ -169,7 +172,17 @@ export function PlayerBar({
           playsinline: 1,
         },
         events: {
-          onReady: () => { ytReadyRef.current = true; },
+          onReady: () => {
+            ytReadyRef.current = true;
+            // The round may have advanced again while this was still loading
+            // — land on whatever is current, not what it was constructed with.
+            if (ytPlayerRef.current && ytVideoIdRef.current !== targetVideoId) {
+              ytPlayerRef.current.cueVideoById({
+                videoId: ytVideoIdRef.current!,
+                startSeconds: ytHookStartMsRef.current / 1000,
+              });
+            }
+          },
         },
       });
     });
@@ -207,7 +220,7 @@ export function PlayerBar({
 
   useEffect(() => {
     stopYoutubePlayback();
-    ytPlayerRef.current?.pauseVideo();
+    if (ytReadyRef.current) ytPlayerRef.current?.pauseVideo();
     if (isPlaying) setIsPlaying(false);
     if (progressMs !== 0) setProgressMs(0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -285,7 +298,7 @@ export function PlayerBar({
 
   function handleYoutubeStop() {
     stopYoutubePlayback();
-    ytPlayerRef.current?.pauseVideo();
+    if (ytReadyRef.current) ytPlayerRef.current?.pauseVideo();
     setIsPlaying(false);
   }
 

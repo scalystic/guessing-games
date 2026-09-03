@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { getAdminUser } from "@/lib/admin/auth";
 import { jsonError, jsonOk, internalErrorJson } from "@/lib/api/response";
+import { findRecentDailyUses } from "@/lib/game/daily-repeat";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,11 @@ export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const q = url.searchParams.get("q")?.trim() ?? "";
   const limit = Math.min(20, Math.max(1, Number(url.searchParams.get("limit") ?? "10")));
+  // The day this search is building a challenge for — defaults to today so a
+  // plain search (no challenge context) still flags recent repeats sanely.
+  const forDayKey = url.searchParams.get("dayKey") ?? new Date().toISOString().slice(0, 10);
+  // Editing an existing challenge shouldn't flag the songs it already owns.
+  const excludeChallengeId = url.searchParams.get("excludeChallengeId") ?? undefined;
 
   if (q.length < 2) return jsonOk([]);
 
@@ -40,7 +46,18 @@ export async function GET(request: Request): Promise<Response> {
       orderBy: { title: "asc" },
     });
 
-    return jsonOk(songs);
+    const recentDayKeyByPuzzle = await findRecentDailyUses(
+      songs.map((s) => s.puzzleId),
+      forDayKey,
+      excludeChallengeId,
+    );
+
+    const result = songs.map((song) => ({
+      ...song,
+      recentDailyUseDayKey: recentDayKeyByPuzzle.get(song.puzzleId) ?? null,
+    }));
+
+    return jsonOk(result);
   } catch (error) {
     return internalErrorJson("admin.songs.search", error);
   }

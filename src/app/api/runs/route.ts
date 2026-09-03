@@ -104,11 +104,20 @@ export async function POST(request: Request): Promise<Response> {
         return jsonError(500, "challenge_misconfigured", "Today's challenge has no puzzles.");
       }
 
-      // One run per player per day. If an existing run has no guesses yet
-      // (player opened the page but left without interacting), delete it so
-      // they can start fresh. Only block re-entry once real guesses exist.
+      // One run per player per day — enforced by @@unique([playerId, gameId,
+      // dayKey]), so that's what this has to match on, not dailyChallengeId.
+      // A Run's dailyChallengeId is ON DELETE SET NULL: if today's challenge
+      // was ever deleted and recreated (editing a mistake, re-publishing),
+      // any pre-existing run for the old one is still sitting on this
+      // player's dayKey slot with dailyChallengeId now null. Filtering by
+      // dailyChallengeId would miss that row entirely, and the insert below
+      // would then collide with it on every single request, not just a race.
+      //
+      // If an existing run has no guesses yet (player opened the page but
+      // left without interacting), delete it so they can start fresh. Only
+      // block re-entry once real guesses exist.
       const existing = await prisma.run.findFirst({
-        where: { playerId, gameId: game.id, dailyChallengeId: challenge.id },
+        where: { playerId, gameId: game.id, dayKey: todayKey },
         select: {
           id: true,
           tokenHash: true,
@@ -122,43 +131,71 @@ export async function POST(request: Request): Promise<Response> {
         if (hasGuesses) {
           return jsonError(409, "already_started", "You already have a run for today's challenge.");
         }
-        await prisma.run.delete({ where: { id: existing.id } });
+        // deleteMany rather than delete: a concurrent duplicate request (a
+        // second tab, a StrictMode/Fast-Refresh double-mount) can already have
+        // deleted this same row by the time this one gets here, and `delete`
+        // throws P2025 for a row that's simply already gone.
+        await prisma.run.deleteMany({ where: { id: existing.id } });
       }
 
       const { token, tokenHash } = mintRunToken();
       const runId = randomUUID();
 
-      const rows = await prisma.$queryRaw<{ lives_remaining: number; current_round_index: number }[]>`
-        WITH r AS (
-          INSERT INTO "Run" (
-            id, "gameId", "playerId", mode, "dayKey", seed, "decadeFilter",
-            "dailyChallengeId", "livesRemaining", "maxRounds", "scoringVersion",
-            "isRanked", "tokenHash", "expiresAt"
+      let rows: { lives_remaining: number; current_round_index: number }[];
+      try {
+        rows = await prisma.$queryRaw<{ lives_remaining: number; current_round_index: number }[]>`
+          WITH r AS (
+            INSERT INTO "Run" (
+              id, "gameId", "playerId", mode, "dayKey", seed, "decadeFilter",
+              "dailyChallengeId", "livesRemaining", "maxRounds", "scoringVersion",
+              "isRanked", "tokenHash", "expiresAt"
+            )
+            VALUES (
+              ${runId}, ${game.id}, ${playerId}, 'DAILY'::"RunMode",
+              ${challenge.dayKey}, ${randomBytes(16).toString("hex")}, NULL,
+              ${challenge.id}, ${game.livesPerRun}, ${challenge.roundCount},
+              ${game.scoringVersion}, true,
+              ${tokenHash}, ${new Date(Date.now() + RUN_TTL_MINUTES * 60 * 1000)}
+            )
+            RETURNING id, "livesRemaining", "currentRoundIndex"
+          ),
+          rr AS (
+            INSERT INTO "RunRound" (
+              id, "runId", "roundIndex", "puzzleId",
+              "targetPopularity", "puzzlePopularity"
+            )
+            SELECT ${randomUUID()}, r.id, 1, ${firstEntry.puzzleId},
+                   ${firstEntry.targetPopularity ?? 0}, 0
+            FROM r
+            RETURNING id
           )
-          VALUES (
-            ${runId}, ${game.id}, ${playerId}, 'DAILY'::"RunMode",
-            ${challenge.dayKey}, ${randomBytes(16).toString("hex")}, NULL,
-            ${challenge.id}, ${game.livesPerRun}, ${challenge.roundCount},
-            ${game.scoringVersion}, true,
-            ${tokenHash}, ${new Date(Date.now() + RUN_TTL_MINUTES * 60 * 1000)}
-          )
-          RETURNING id, "livesRemaining", "currentRoundIndex"
-        ),
-        rr AS (
-          INSERT INTO "RunRound" (
-            id, "runId", "roundIndex", "puzzleId",
-            "targetPopularity", "puzzlePopularity"
-          )
-          SELECT ${randomUUID()}, r.id, 1, ${firstEntry.puzzleId},
-                 ${firstEntry.targetPopularity ?? 0}, 0
-          FROM r
-          RETURNING id
-        )
-        SELECT
-          r."livesRemaining"    AS lives_remaining,
-          r."currentRoundIndex" AS current_round_index
-        FROM r, rr
-      `;
+          SELECT
+            r."livesRemaining"    AS lives_remaining,
+            r."currentRoundIndex" AS current_round_index
+          FROM r, rr
+        `;
+      } catch (insertError) {
+        // Two requests can both pass the `existing` check above and race to
+        // insert — a second tab, a StrictMode/Fast-Refresh double-mount, or a
+        // page reload that lands while the first request is still in flight.
+        // The loser hits @@unique([playerId, gameId, dayKey]) instead of
+        // creating a row; that is the same outcome as `hasGuesses` above, not
+        // a server failure.
+        // $queryRaw never translates a driver error into Prisma's own P2002 —
+        // that only happens for typed Prisma Client calls. A raw query's
+        // failure always comes back as the generic P2010, with the actual
+        // Postgres reason nested at meta.driverAdapterError.cause.kind (the
+        // pg driver adapter's own shape; verified by logging the raw error).
+        const dbErrorKind = (
+          insertError as {
+            meta?: { driverAdapterError?: { cause?: { kind?: string } } };
+          }
+        )?.meta?.driverAdapterError?.cause?.kind;
+        if (dbErrorKind === "UniqueConstraintViolation") {
+          return jsonError(409, "already_started", "You already have a run for today's challenge.");
+        }
+        throw insertError;
+      }
 
       const created = rows[0];
       if (!created) {

@@ -348,6 +348,9 @@ type LockedRow = {
   game_id: string;
   multiplayer_room_id: string | null;
   daily_challenge_id: string | null;
+  day_key: string | null;
+  total_reveal_ms: number;
+  started_at: Date;
   max_attempts: number;
   reveal_ladder: unknown;
   ladder_revision: number;
@@ -391,6 +394,9 @@ async function lockAndRead(tx: Tx, runId: string): Promise<LockedRow> {
       r."gameId"              AS game_id,
       r."multiplayerRoomId"   AS multiplayer_room_id,
       r."dailyChallengeId"    AS daily_challenge_id,
+      r."dayKey"              AS day_key,
+      r."totalRevealMs"       AS total_reveal_ms,
+      r."startedAt"           AS started_at,
       g."maxAttempts"         AS max_attempts,
       g."revealLadder"        AS reveal_ladder,
       g."ladderRevision"      AS ladder_revision,
@@ -450,6 +456,9 @@ type RunFacts = {
   mode: RunMode;
   multiplayerRoomId: string | null;
   dailyChallengeId: string | null;
+  dayKey: string | null;
+  totalRevealMs: number;
+  startedAt: Date;
   livesRemaining: number;
   maxRounds: number | null;
   currentStreak: number;
@@ -506,6 +515,9 @@ function facts(row: LockedRow, runId: string): { run: RunFacts; round: RoundFact
       mode: row.mode as RunMode,
       multiplayerRoomId: row.multiplayer_room_id,
       dailyChallengeId: row.daily_challenge_id,
+      dayKey: row.day_key,
+      totalRevealMs: row.total_reveal_ms,
+      startedAt: row.started_at,
       livesRemaining: row.lives_remaining,
       maxRounds: row.max_rounds,
       currentStreak: row.current_streak,
@@ -1071,6 +1083,49 @@ async function completeRun(
   },
 ): Promise<void> {
   const { run, points, xp, revealMs, solved, livesRemaining, nextStreak, bestStreak } = args;
+
+  // DAILY additionally upserts the LeaderboardEntry row for today's board, in
+  // the same statement — one round trip, not two, matching every other write
+  // in this file. `updated` carries the run's own just-committed totals
+  // forward so the entry reflects the state this UPDATE produced, not a
+  // second, separately-timed read of it.
+  if (run.mode === "DAILY" && run.dailyChallengeId && run.dayKey) {
+    await tx.$executeRaw`
+      WITH updated AS (
+        UPDATE "Run"
+        SET status            = 'COMPLETED'::"RunStatus",
+            "endedAt"         = now(),
+            version           = version + 1,
+            "livesRemaining"  = ${Math.max(0, livesRemaining)},
+            "currentStreak"   = ${nextStreak},
+            "bestStreak"      = ${bestStreak},
+            score             = score + ${points},
+            "xpEarned"        = "xpEarned" + ${xp},
+            "roundsSolved"    = "roundsSolved" + ${solved ? 1 : 0},
+            "roundsFailed"    = "roundsFailed" + ${solved ? 0 : 1},
+            "totalRevealMs"   = "totalRevealMs" + ${revealMs}
+        WHERE id = ${run.id}
+        RETURNING score, "totalRevealMs", "endedAt"
+      )
+      INSERT INTO "LeaderboardEntry"
+        (id, "gameId", "boardType", "periodKey", "playerId", score,
+         "tieBreakRevealMs", "tieBreakDurationMs", "runId", "updatedAt")
+      SELECT
+        ${randomUUID()}, ${run.gameId}, 'DAILY'::"BoardType", ${run.dayKey},
+        ${run.playerId}, updated.score, updated."totalRevealMs",
+        EXTRACT(EPOCH FROM (updated."endedAt" - ${run.startedAt}))::int * 1000,
+        ${run.id}, now()
+      FROM updated
+      ON CONFLICT ("gameId", "boardType", "periodKey", "playerId")
+      DO UPDATE SET
+        score               = EXCLUDED.score,
+        "tieBreakRevealMs"  = EXCLUDED."tieBreakRevealMs",
+        "tieBreakDurationMs" = EXCLUDED."tieBreakDurationMs",
+        "runId"             = EXCLUDED."runId",
+        "updatedAt"         = now()
+    `;
+    return;
+  }
 
   await tx.$executeRaw`
     UPDATE "Run"

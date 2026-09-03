@@ -12,6 +12,8 @@ import { ResultPanel } from "@/components/ResultPanel";
 import { ProfileMenu } from "@/components/ProfileMenu";
 import { Modal } from "@/components/Modal";
 import { HowToPlayList } from "@/components/HowToPlayList";
+import { Leaderboard } from "@/components/Leaderboard";
+import { DailyStreakStrip } from "@/components/DailyStreakStrip";
 
 function formatSeconds(milliseconds: number) {
   const seconds = milliseconds / 1000;
@@ -57,6 +59,7 @@ function formatDay(dayKey: string) {
 
 function PageShell({
   user,
+  gameSlug,
   maxAttempts,
   showHelp,
   onHelp,
@@ -64,6 +67,7 @@ function PageShell({
   children,
 }: {
   user: CurrentUser;
+  gameSlug: string;
   maxAttempts: number;
   showHelp: boolean;
   onHelp: () => void;
@@ -108,6 +112,10 @@ function PageShell({
             <ProfileMenu user={user} />
           </nav>
         </header>
+
+        <div className="border-b border-(--hairline) py-5">
+          <DailyStreakStrip gameSlug={gameSlug} />
+        </div>
 
         {children}
       </div>
@@ -160,6 +168,13 @@ function AlreadyPlayedPanel({ info }: { info: ChallengeInfo }) {
           </p>
         </div>
 
+        <div className="mt-4 text-left">
+          <p className="mb-3 text-center font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-(--text-faint)">
+            Today&apos;s Leaderboard
+          </p>
+          <Leaderboard dayKey={info.dayKey} accent="var(--signal)" />
+        </div>
+
         <Link
           href="/"
           className="mt-4 block w-full rounded-xl border border-(--hairline) px-4 py-2.5 text-center text-sm font-semibold text-(--text-dim) transition hover:bg-(--surface-hover) hover:text-(--text)"
@@ -175,10 +190,12 @@ function ChallengeCompletePanel({
   roundsSolved,
   roundCount,
   score,
+  dayKey,
 }: {
   roundsSolved: number;
   roundCount: number;
   score: number;
+  dayKey: string;
 }) {
   return (
     <div className="flex flex-col items-center gap-6 py-12 text-center">
@@ -202,6 +219,13 @@ function ChallengeCompletePanel({
         </div>
       </div>
 
+      <div className="w-full max-w-sm text-left">
+        <p className="mb-3 text-center font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-(--text-faint)">
+          Today&apos;s Leaderboard
+        </p>
+        <Leaderboard dayKey={dayKey} accent="var(--signal)" />
+      </div>
+
       <Link
         href="/"
         className="rounded-xl border border-(--hairline) px-5 py-2.5 text-sm font-semibold text-(--text-dim) transition hover:bg-(--surface-hover) hover:text-(--text)"
@@ -217,10 +241,12 @@ function DailyGame({
   user,
   config,
   roundCount,
+  dayKey,
 }: {
   user: CurrentUser;
   config: GameDetail;
   roundCount: number | null;
+  dayKey: string;
 }) {
   const [showHelp, setShowHelp] = useState(false);
   const [showCompletion, setShowCompletion] = useState(false);
@@ -265,6 +291,7 @@ function DailyGame({
   return (
     <PageShell
       user={user}
+      gameSlug={config.slug}
       maxAttempts={config.maxAttempts}
       showHelp={showHelp}
       onHelp={() => setShowHelp(true)}
@@ -315,6 +342,7 @@ function DailyGame({
           roundsSolved={game.roundsSolved}
           roundCount={roundCount ?? game.roundsSolved}
           score={game.score}
+          dayKey={dayKey}
         />
       ) : (
         <section className="py-7 sm:py-9" aria-labelledby="mystery-track-title">
@@ -450,6 +478,7 @@ export default function DailyClient({ user, game: config }: { user: CurrentUser;
     return (
       <PageShell
         user={user}
+        gameSlug={config.slug}
         maxAttempts={config.maxAttempts}
         showHelp={showHelp}
         onHelp={() => setShowHelp(true)}
@@ -467,6 +496,7 @@ export default function DailyClient({ user, game: config }: { user: CurrentUser;
     return (
       <PageShell
         user={user}
+        gameSlug={config.slug}
         maxAttempts={config.maxAttempts}
         showHelp={showHelp}
         onHelp={() => setShowHelp(true)}
@@ -487,6 +517,7 @@ export default function DailyClient({ user, game: config }: { user: CurrentUser;
     return (
       <PageShell
         user={user}
+        gameSlug={config.slug}
         maxAttempts={config.maxAttempts}
         showHelp={showHelp}
         onHelp={() => setShowHelp(true)}
@@ -503,6 +534,7 @@ export default function DailyClient({ user, game: config }: { user: CurrentUser;
       user={user}
       config={config}
       roundCount={challengeInfo.roundCount}
+      dayKey={challengeInfo.dayKey}
     />
   );
 }

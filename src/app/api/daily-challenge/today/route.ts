@@ -47,8 +47,16 @@ export async function GET(request: Request): Promise<Response> {
 
     const { playerId } = await ensurePlayer(clientIp(request));
 
+    // Matched on dayKey, not dailyChallengeId — the same reasoning as the
+    // POST /api/runs "existing run" check: dailyChallengeId is
+    // ON DELETE SET NULL, so a run against a since-edited-or-recreated
+    // challenge for today would otherwise go undetected here while still
+    // being very much there, and still enforced by the DB's
+    // @@unique([playerId, gameId, dayKey]). Reporting alreadyPlayed: false in
+    // that case renders the game screen for a run that /api/runs will then
+    // reject with 409 the moment it tries to start.
     const existingRun = await prisma.run.findFirst({
-      where: { playerId, gameId: game.id, dailyChallengeId: challenge.id },
+      where: { playerId, gameId: game.id, dayKey: todayKey },
       select: {
         id: true,
         status: true,
