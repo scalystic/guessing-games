@@ -470,7 +470,12 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
                       <span className="font-medium text-(--text)">{song.title}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-(--text-dim)">{song.artist}</td>
+                  <td className="px-4 py-3 text-(--text-dim)">
+                    <div className="flex flex-col gap-0.5">
+                      <span>{song.artist}</span>
+                      <SourceLine song={song} />
+                    </div>
+                  </td>
                   <td className="px-4 py-3">
                     <PopularityCell song={song} onSaved={applySongUpdate} />
                   </td>
@@ -605,6 +610,37 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Where the track comes from, under the artist.
+ *
+ * Film wins over album when a song has both, and they usually do: Song.album is
+ * the literal store collection ("Saiyaara (Original Motion Picture
+ * Soundtrack)"), while Song.movie holds the bare film title and is only set when
+ * something actually identified the track as a film track. For a catalog this
+ * Bollywood-heavy the film is the thing an admin recognises a song by, and the
+ * album string is that same name plus boilerplate.
+ *
+ * Labelled rather than shown bare because "Saiyaara" alone doesn't say whether
+ * it's a film or a record, and the two carry different weight when you're
+ * deciding whether a row is the original recording.
+ */
+function SourceLine({ song }: { song: SongRow }) {
+  const label = song.movie ? "Film" : "Album";
+  const value = song.movie ?? song.album;
+  if (!value) return null;
+
+  return (
+    <span className="flex items-baseline gap-1.5 text-xs text-(--text-faint)">
+      <span className="shrink-0 text-[9px] font-medium uppercase tracking-wide opacity-70">
+        {label}
+      </span>
+      <span className="max-w-[16rem] truncate" title={value}>
+        {value}
+      </span>
+    </span>
   );
 }
 
