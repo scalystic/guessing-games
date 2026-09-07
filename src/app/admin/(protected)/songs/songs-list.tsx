@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { DeleteSongButton } from "./delete-song-button";
 import { DraftSongButton } from "./draft-song-button";
 import { AddSongModal } from "./add-song-modal";
@@ -9,6 +10,7 @@ import { ImportYoutubeModal } from "./import-youtube-modal";
 import { SongReviewDrawer } from "./song-review-drawer";
 import { CoverArt } from "@/components/CoverArt";
 import { formatHookTime } from "@/components/admin/hook-audio";
+import { defaultDirFor, type SortDir, type SortKey } from "@/lib/admin/song-sort";
 
 /**
  * The catalog index, and the entry point to hook review.
@@ -24,8 +26,7 @@ import { formatHookTime } from "@/components/admin/hook-audio";
  */
 
 export type StatusFilter = "all" | "locked" | "in-review" | "draft";
-export type SortKey = "title" | "artist" | "popularity" | "newest";
-export type SortDir = "asc" | "desc";
+export type { SortKey, SortDir };
 
 export type SongsQuery = {
   q: string;
@@ -73,6 +74,37 @@ function bucketOf(song: SongRow): CountBucket {
   return song.isLocked ? "locked" : "inReview";
 }
 
+/// The sort menu. Every (key, direction) pair the table can be put in, named the
+/// way an admin would ask for it rather than as a column plus an arrow —
+/// "Oldest first" is a thing you want, "date ascending" is a thing you have to
+/// decode. The column headers write the same two params, so the menu and the
+/// arrows stay in sync for free.
+const SORT_OPTIONS: { sort: SortKey; dir: SortDir; label: string }[] = [
+  { sort: "newest", dir: "desc", label: "Newest first" },
+  { sort: "newest", dir: "asc", label: "Oldest first" },
+  { sort: "title", dir: "asc", label: "Title A–Z" },
+  { sort: "title", dir: "desc", label: "Title Z–A" },
+  { sort: "artist", dir: "asc", label: "Artist A–Z" },
+  { sort: "artist", dir: "desc", label: "Artist Z–A" },
+  { sort: "popularity", dir: "desc", label: "Most popular" },
+  { sort: "popularity", dir: "asc", label: "Least popular" },
+];
+
+/// Fixed locale and fields rather than the browser's default: this column is
+/// scanned down, so every row has to be the same width and the same shape, and
+/// an en-US "9/7/2026" next to an en-GB "07/09/2026" is also two different days.
+const ADDED_DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+});
+
+function formatAddedDate(iso: string | null) {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "—" : ADDED_DATE_FORMAT.format(date);
+}
+
 function popularityTone(value: number) {
   if (value >= 70) return "bg-emerald-500";
   if (value >= 40) return "bg-amber-500";
@@ -88,33 +120,59 @@ function buildHref(params: Record<string, string | number | undefined>) {
   return qs ? `/admin/songs?${qs}` : "/admin/songs";
 }
 
+/// A sortable column heading. Renders the `<th>` itself so `aria-sort` lands on
+/// the header cell, which is the only element it is defined on.
 function SortHeader({
   label,
   sortKey,
   query,
+  className = "",
 }: {
   label: string;
   sortKey: SortKey;
   query: SongsQuery;
+  className?: string;
 }) {
   const isActive = query.sort === sortKey;
-  const nextDir: SortDir = isActive && query.dir === "asc" ? "desc" : "asc";
-  const href = buildHref({ q: query.q, status: query.status, sort: sortKey, dir: nextDir });
+  // Clicking the column you are already on flips it; clicking a new column
+  // starts at that column's natural direction rather than always at ascending,
+  // so one click on "Added" reads newest-first the way the menu does.
+  const nextDir: SortDir = isActive
+    ? query.dir === "asc"
+      ? "desc"
+      : "asc"
+    : defaultDirFor(sortKey);
+  const href = buildHref({
+    q: query.q,
+    status: query.status === "all" ? undefined : query.status,
+    sort: sortKey,
+    dir: nextDir,
+  });
 
   return (
-    <Link
-      href={href}
-      className={`inline-flex items-center gap-1 transition hover:text-(--text) ${
-        isActive ? "text-(--text)" : ""
-      }`}
+    <th
+      scope="col"
+      aria-sort={isActive ? (query.dir === "asc" ? "ascending" : "descending") : "none"}
+      className={`px-4 py-3 font-medium ${className}`}
     >
-      {label}
-      <span className="text-[10px]">{isActive ? (query.dir === "asc" ? "▲" : "▼") : ""}</span>
-    </Link>
+      <Link
+        href={href}
+        title={`Sort by ${label.toLowerCase()} — ${
+          nextDir === "asc" ? "ascending" : "descending"
+        }`}
+        className={`inline-flex items-center gap-1 transition hover:text-(--text) ${
+          isActive ? "text-(--text)" : ""
+        }`}
+      >
+        {label}
+        <span className="text-[10px]">{isActive ? (query.dir === "asc" ? "▲" : "▼") : ""}</span>
+      </Link>
+    </th>
   );
 }
 
 export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
+  const router = useRouter();
   const [songs, setSongs] = useState<SongRow[]>([]);
   const [counts, setCounts] = useState<Counts>(EMPTY_COUNTS);
   const [ladder, setLadder] = useState<number[]>([]);
@@ -284,9 +342,12 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <form method="get" className="flex gap-2">
+          {/* Searching is a filter change, not a sort change — carry the current
+              tab and ordering through the navigation so the results come back
+              sorted the way the list already was. */}
           {status !== "all" && <input type="hidden" name="status" value={status} />}
-          {sort !== "title" && <input type="hidden" name="sort" value={sort} />}
-          {dir !== "asc" && <input type="hidden" name="dir" value={dir} />}
+          <input type="hidden" name="sort" value={sort} />
+          <input type="hidden" name="dir" value={dir} />
           <input
             type="search"
             name="q"
@@ -303,16 +364,35 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
         </form>
 
         <div className="flex flex-wrap items-center gap-3">
-          <Link
-            href={buildHref({ q, status: status === "all" ? undefined : status, sort: "newest" })}
-            className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-              sort === "newest"
-                ? "border-violet-500 bg-violet-500/10 text-violet-500"
-                : "border-(--hairline) text-(--text-dim) hover:bg-(--surface-hover)"
-            }`}
-          >
-            Newest first
-          </Link>
+          <label className="flex items-center gap-2 text-xs text-(--text-faint)">
+            <span>Sort</span>
+            <select
+              value={`${sort}:${dir}`}
+              onChange={(event) => {
+                const [nextSort, nextDir] = event.target.value.split(":");
+                // Navigate rather than set local state: the sort lives in the
+                // URL so it survives a reload and can be linked, and `page` is
+                // deliberately dropped — page 4 of a title sort is a different
+                // set of songs than page 4 of a date sort, so re-sorting starts
+                // over at the top.
+                router.push(
+                  buildHref({
+                    q,
+                    status: status === "all" ? undefined : status,
+                    sort: nextSort,
+                    dir: nextDir,
+                  }),
+                );
+              }}
+              className="rounded-lg border border-(--hairline) bg-(--surface-strong) px-3 py-1.5 text-xs font-medium text-(--text) outline-none transition hover:bg-(--surface-hover) focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20"
+            >
+              {SORT_OPTIONS.map((option) => (
+                <option key={`${option.sort}:${option.dir}`} value={`${option.sort}:${option.dir}`}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
 
           <div className="flex gap-1 rounded-lg border border-(--hairline) bg-(--surface-strong) p-1">
             {STATUS_FILTERS.map((f) => (
@@ -342,17 +422,14 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
         <table className="w-full text-left text-sm">
           <thead className="border-b border-(--hairline) text-(--text-faint)">
             <tr>
-              <th className="px-4 py-3 font-medium">
-                <SortHeader label="Title" sortKey="title" query={initialQuery} />
+              <SortHeader label="Title" sortKey="title" query={initialQuery} />
+              <SortHeader label="Artist" sortKey="artist" query={initialQuery} />
+              <SortHeader label="Popularity" sortKey="popularity" query={initialQuery} />
+              <SortHeader label="Added" sortKey="newest" query={initialQuery} />
+              <th scope="col" className="px-4 py-3 font-medium">
+                Status
               </th>
-              <th className="px-4 py-3 font-medium">
-                <SortHeader label="Artist" sortKey="artist" query={initialQuery} />
-              </th>
-              <th className="px-4 py-3 font-medium">
-                <SortHeader label="Popularity" sortKey="popularity" query={initialQuery} />
-              </th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">
+              <th scope="col" className="px-4 py-3 font-medium">
                 <div className="flex items-center gap-2">
                   <span>Hook</span>
                   <button
@@ -368,13 +445,15 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
                   </button>
                 </div>
               </th>
-              <th className="px-4 py-3 text-right font-medium">Action</th>
+              <th scope="col" className="px-4 py-3 text-right font-medium">
+                Action
+              </th>
             </tr>
           </thead>
           <tbody>
             {isLoading && (
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-(--text-faint)">
+                <td colSpan={7} className="px-4 py-10 text-center text-(--text-faint)">
                   Loading…
                 </td>
               </tr>
@@ -394,6 +473,9 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
                   <td className="px-4 py-3 text-(--text-dim)">{song.artist}</td>
                   <td className="px-4 py-3">
                     <PopularityCell song={song} onSaved={applySongUpdate} />
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-xs tabular-nums text-(--text-faint)">
+                    {formatAddedDate(song.createdAt)}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-col items-start gap-1">
@@ -457,7 +539,7 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
               ))}
             {!isLoading && songs.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-(--text-faint)">
+                <td colSpan={7} className="px-4 py-10 text-center text-(--text-faint)">
                   No songs match your filters.
                 </td>
               </tr>
@@ -473,7 +555,13 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
         <div className="flex gap-2">
           {page > 1 ? (
             <Link
-              href={buildHref({ q, status, sort, dir, page: page - 1 })}
+              href={buildHref({
+                q,
+                status: status === "all" ? undefined : status,
+                sort,
+                dir,
+                page: page - 1,
+              })}
               className="rounded-lg border border-(--hairline) px-4 py-2 text-sm font-medium text-(--text-dim) transition hover:bg-(--surface-hover)"
             >
               Previous
@@ -485,7 +573,13 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
           )}
           {page < totalPages ? (
             <Link
-              href={buildHref({ q, status, sort, dir, page: page + 1 })}
+              href={buildHref({
+                q,
+                status: status === "all" ? undefined : status,
+                sort,
+                dir,
+                page: page + 1,
+              })}
               className="rounded-lg border border-(--hairline) px-4 py-2 text-sm font-medium text-(--text-dim) transition hover:bg-(--surface-hover)"
             >
               Next

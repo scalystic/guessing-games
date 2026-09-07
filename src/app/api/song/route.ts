@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { getAdminUser } from "@/lib/admin/auth";
 import { SongMetadataSchema, type SongMetadataInput } from "@/lib/admin/song-validation";
+import { SORT_KEYS, defaultDirFor, type SortKey } from "@/lib/admin/song-sort";
 import { hasAllowedAudioExtension, ALLOWED_AUDIO_EXTENSIONS } from "@/lib/admin/audio-file";
 import {
   parseAudioFile,
@@ -23,8 +24,11 @@ async function getSonglessGameId(): Promise<string | null> {
   return game?.id ?? null;
 }
 
-const SORTABLE_FIELDS = ["title", "artist", "popularity", "newest"] as const;
-type SortField = (typeof SORTABLE_FIELDS)[number];
+/// The sortable columns and their default directions are shared with the admin
+/// list UI (src/lib/admin/song-sort.ts) — a ?sort= with no ?dir= has to mean the
+/// same thing to this route as it does to the page that links to it.
+const SORTABLE_FIELDS = SORT_KEYS;
+type SortField = SortKey;
 
 const PAGE_SIZE = 10;
 
@@ -59,7 +63,7 @@ type StatusKey = keyof typeof STATUS_WHERE;
 const STATUS_ALIASES: Record<string, StatusKey | undefined> = { removed: "draft" };
 
 /**
- * GET /api/song?q=&status=locked|in-review|draft&sort=title|artist|popularity&dir=asc|desc&page=1
+ * GET /api/song?q=&status=locked|in-review|draft&sort=title|artist|popularity|newest&dir=asc|desc&page=1
  *
  * `counts` are catalog-wide (ignore q/status, used for the stat-card tabs);
  * `matchedCount`/`totalPages` describe the current q+status filter, which is
@@ -84,11 +88,16 @@ export async function GET(request: Request): Promise<Response> {
     statusParam in STATUS_WHERE
       ? (statusParam as StatusKey)
       : (STATUS_ALIASES[statusParam] ?? "all");
-  const sortParam = url.searchParams.get("sort") ?? "title";
+  // Defaults to "newest" to match /admin/songs: the catalog is worked from the
+  // most recent import backwards, and a request that names no sort should land
+  // on the same page the UI's own default does.
+  const sortParam = url.searchParams.get("sort") ?? "newest";
   const sort: SortField = (SORTABLE_FIELDS as readonly string[]).includes(sortParam)
     ? (sortParam as SortField)
-    : "title";
-  const dir: "asc" | "desc" = url.searchParams.get("dir") === "desc" ? "desc" : "asc";
+    : "newest";
+  const dirParam = url.searchParams.get("dir");
+  const dir: "asc" | "desc" =
+    dirParam === "asc" || dirParam === "desc" ? dirParam : defaultDirFor(sort);
   const pageParam = Number(url.searchParams.get("page") ?? "1");
   const page = Number.isInteger(pageParam) && pageParam > 0 ? pageParam : 1;
 
@@ -121,14 +130,21 @@ export async function GET(request: Request): Promise<Response> {
             },
           },
         },
-        orderBy:
+        // Tie-broken on the primary key. Popularity in particular is dense —
+        // every song added through the minimal upload flow seeds at 50 — and
+        // an ordering that only names a tied column lets Postgres return the
+        // tied rows in a different order per query, which pages the same song
+        // twice and drops another.
+        orderBy: [
           sort === "artist"
             ? { artist: dir }
             : sort === "popularity"
               ? { puzzle: { popularity: dir } }
               : sort === "newest"
-                ? { createdAt: "desc" }
+                ? { createdAt: dir }
                 : { title: dir },
+          { puzzleId: "asc" as const },
+        ],
         skip: (page - 1) * PAGE_SIZE,
         take: PAGE_SIZE,
       }),

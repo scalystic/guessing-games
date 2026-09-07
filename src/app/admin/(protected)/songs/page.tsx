@@ -1,11 +1,11 @@
-import { SongsList, type SongsQuery, type SortKey, type StatusFilter } from "./songs-list";
+import { SongsList, type SongsQuery, type StatusFilter } from "./songs-list";
+import { SORT_KEYS, defaultDirFor, type SortDir, type SortKey } from "@/lib/admin/song-sort";
 
 const STATUS_VALUES: StatusFilter[] = ["all", "locked", "in-review", "draft"];
 
 /// ?status=removed is what the drafts tab was called before drafting became
 /// reversible; GET /api/song accepts the same alias.
 const STATUS_ALIASES: Record<string, StatusFilter | undefined> = { removed: "draft" };
-const SORT_VALUES: SortKey[] = ["title", "artist", "popularity", "newest"];
 
 /// This page only resolves the initial query from the URL and hands off to
 /// SongsList (a client component), which owns the actual data — fetched
@@ -20,13 +20,19 @@ export default async function SongsPage({
 
   const pageNum = Number(sp.page);
 
+  const sort: SortKey = SORT_KEYS.includes(sp.sort as SortKey) ? (sp.sort as SortKey) : "newest";
+  // A URL that names a sort but no direction gets that sort's natural one, so
+  // the bare /admin/songs still opens on the most recent imports rather than
+  // the oldest — see defaultDirFor.
+  const dir: SortDir = sp.dir === "asc" || sp.dir === "desc" ? sp.dir : defaultDirFor(sort);
+
   const query: SongsQuery = {
     q: typeof sp.q === "string" ? sp.q.trim() : "",
     status: STATUS_VALUES.includes(sp.status as StatusFilter)
       ? (sp.status as StatusFilter)
       : (STATUS_ALIASES[String(sp.status)] ?? "all"),
-    sort: SORT_VALUES.includes(sp.sort as SortKey) ? (sp.sort as SortKey) : "newest",
-    dir: sp.dir === "desc" ? "desc" : "asc",
+    sort,
+    dir,
     page: Number.isInteger(pageNum) && pageNum > 0 ? pageNum : 1,
   };
 
