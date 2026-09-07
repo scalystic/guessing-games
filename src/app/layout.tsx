@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Fraunces, Geist_Mono, Instrument_Sans } from "next/font/google";
 import Script from "next/script";
+import { CookieNotice } from "@/components/CookieNotice";
+import { SiteFooter } from "@/components/SiteFooter";
 import "./globals.css";
 
 const instrumentSans = Instrument_Sans({
@@ -53,6 +55,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }}
         />
         <main className="flex-1">{children}</main>
+        {/* Mounted at the root so the legal links exist on every screen —
+            including /sargam, which is where "/" sends people and therefore the
+            page an OAuth reviewer will actually look at. */}
+        <SiteFooter />
+        <CookieNotice />
       </body>
     </html>
   );

@@ -1,22 +1,17 @@
-import { notFound } from "next/navigation";
-import { getCurrentUser } from "@/lib/get-current-user";
-import { getActiveGameBySlug } from "@/lib/games";
-import Home from "./home-client";
+import { redirect } from "next/navigation";
 
-/// The one game v1 ships. A game picker would read /api/games instead.
-const GAME_SLUG = "songless";
-
-export default async function Page() {
-  // Read straight from the data layer rather than fetching our own API: this is
-  // a server component, and an HTTP round trip to ourselves buys nothing.
-  const [user, game] = await Promise.all([
-    getCurrentUser(),
-    getActiveGameBySlug(GAME_SLUG),
-  ]);
-
-  // Only reachable if the seed hasn't been run — better a 404 than a board
-  // rendered against an undefined reveal ladder.
-  if (!game) notFound();
-
-  return <Home user={user} game={game} />;
+/// Sargam is the only game that ships today, so "/" just forwards to it.
+///
+/// Deliberately a 307 (redirect(), not permanentRedirect()) and deliberately a
+/// page rather than a next.config redirect:
+///
+///   - 307 keeps "/" reusable. Once there's an arcade landing page here, a 308
+///     already cached by browsers and crawlers would be very hard to take back.
+///   - Keeping page.tsx means "/" stays a real route, so the existing
+///     `href="/"` links (auth layout, daily screens, game view) keep passing
+///     typed-route checks and keep meaning "home".
+///
+/// When the landing page arrives, replace this body — nothing else has to move.
+export default function Page() {
+  redirect("/sargam");
 }
