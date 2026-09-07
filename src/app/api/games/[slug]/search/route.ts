@@ -11,10 +11,14 @@ import { normalizeSearchText } from "@/lib/game/search-text";
 /// puzzleId.
 ///
 /// Results are restricted to PLAYABLE puzzles, matching the selector's
-/// definition: active, not blocked, and holding an AUDIO_CLIP whose
-/// stageByteOffsets cover every stage. Offering a candidate the sampler would
-/// never serve is harmless for correctness but makes the catalog look bigger
-/// than it is.
+/// definition: active, not blocked, carrying a YouTube id, and LOCKED (an admin
+/// has signed off on hookStartMs — see Song.isLocked). Offering a candidate the
+/// sampler would never serve is harmless for correctness but makes the catalog
+/// look bigger than it is.
+///
+/// The stale half of that sentence, for anyone reading git history: playability
+/// used to also mean "holds an AUDIO_CLIP whose stageByteOffsets cover every
+/// stage". Stored clips are retired.
 
 export const dynamic = "force-dynamic";
 
@@ -111,6 +115,10 @@ export async function GET(
         -- (Not reproduced as SQL: an interpolation inside a -- comment still
         -- binds a parameter Postgres never references, which fails the query.)
         AND s."externalId" IS NOT NULL
+        -- REVIEW GATE, matching the sampler. An unlocked song is one the sampler
+        -- will never serve, so offering it here is a candidate that can only ever
+        -- be wrong — exactly the lockstep the header comment demands.
+        AND s."isLocked" = true
         AND (
           s."searchText" LIKE ${`%${query}%`}
           OR ${query} <% s."searchText"

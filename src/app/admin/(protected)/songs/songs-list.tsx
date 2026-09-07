@@ -1,13 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { DeleteSongButton } from "./delete-song-button";
+import { DraftSongButton } from "./draft-song-button";
 import { AddSongModal } from "./add-song-modal";
 import { ImportYoutubeModal } from "./import-youtube-modal";
+import { SongReviewDrawer } from "./song-review-drawer";
 import { CoverArt } from "@/components/CoverArt";
+import { formatHookTime } from "@/components/admin/hook-audio";
 
-export type StatusFilter = "all" | "active" | "removed" | "missing-clip";
+/**
+ * The catalog index, and the entry point to hook review.
+ *
+ * What this screen used to be, and why it changed: hook editing happened inline,
+ * in a table cell, through a ±1s stepper and a floating YouTube VIDEO embed. A
+ * 1000ms step cannot place a value that decides what the first 400ms of a round
+ * sounds like, and the embed both played video nobody needed and could only seek
+ * to within a couple of hundred milliseconds of the request. Editing now lives
+ * in a drawer with a real waveform and sample-accurate audio (see
+ * components/admin/AudioHookEditor.tsx); this table's job is to show the queue
+ * and get you into it.
+ */
+
+export type StatusFilter = "all" | "locked" | "in-review" | "draft";
 export type SortKey = "title" | "artist" | "popularity" | "newest";
 export type SortDir = "asc" | "desc";
 
@@ -19,29 +35,43 @@ export type SongsQuery = {
   page: number;
 };
 
-type SongRow = {
+export type SongRow = {
   puzzleId: string;
   title: string;
   artist: string;
   album: string | null;
+  movie: string | null;
   popularity: number;
+  isActive: boolean;
   isBlocked: boolean;
   externalId: string | null;
   hookStartMs: number;
   hookStartAutoDetected: boolean;
+  isLocked: boolean;
+  lockedAt: string | null;
   createdAt: string | null;
 };
 
-type Counts = { total: number; active: number; removed: number; missingClip: number };
+type Counts = { total: number; locked: number; inReview: number; draft: number };
 
-const EMPTY_COUNTS: Counts = { total: 0, active: 0, removed: 0, missingClip: 0 };
+const EMPTY_COUNTS: Counts = { total: 0, locked: 0, inReview: 0, draft: 0 };
 
 const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
   { key: "all", label: "All" },
-  { key: "active", label: "In catalog" },
-  { key: "removed", label: "Removed" },
-  { key: "missing-clip", label: "Missing clip" },
+  { key: "locked", label: "Locked" },
+  { key: "in-review", label: "In review" },
+  { key: "draft", label: "Drafts" },
 ];
+
+/// Which stat card a row is counted under. The three are mutually exclusive and
+/// drafting takes precedence over the lock, matching GET /api/song's
+/// STATUS_WHERE — a drafted song is a draft whatever its lock says.
+type CountBucket = "locked" | "inReview" | "draft";
+
+function bucketOf(song: SongRow): CountBucket {
+  if (song.isBlocked) return "draft";
+  return song.isLocked ? "locked" : "inReview";
+}
 
 function popularityTone(value: number) {
   if (value >= 70) return "bg-emerald-500";
@@ -84,55 +114,19 @@ function SortHeader({
   );
 }
 
-// Mini YouTube player that floats at the bottom of the screen.
-function YouTubePlayer({
-  song,
-  onClose,
-}: {
-  song: SongRow;
-  onClose: () => void;
-}) {
-  const startSec = Math.floor(song.hookStartMs / 1000);
-  const src = `https://www.youtube.com/embed/${song.externalId}?start=${startSec}&autoplay=1&rel=0`;
-
-  return (
-    <div className="fixed bottom-6 right-6 z-50 flex w-80 flex-col overflow-hidden rounded-2xl border border-(--hairline) bg-(--surface-strong) shadow-2xl">
-      <div className="flex items-center justify-between px-3 py-2">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-(--text)">{song.title}</p>
-          <p className="truncate text-xs text-(--text-dim)">{song.artist}</p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="ml-2 shrink-0 rounded-lg p-1.5 text-(--text-faint) transition hover:bg-(--surface-hover) hover:text-(--text)"
-        >
-          ✕
-        </button>
-      </div>
-      <iframe
-        src={src}
-        allow="autoplay; encrypted-media"
-        className="h-44 w-full border-0"
-        title={song.title}
-      />
-    </div>
-  );
-}
-
 export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
   const [songs, setSongs] = useState<SongRow[]>([]);
   const [counts, setCounts] = useState<Counts>(EMPTY_COUNTS);
+  const [ladder, setLadder] = useState<number[]>([]);
   const [totalPages, setTotalPages] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, startLoad] = useTransition();
-  const [playingSong, setPlayingSong] = useState<SongRow | null>(null);
-  const playingIdRef = useRef<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [detectingIds, setDetectingIds] = useState<Set<string>>(new Set());
+  /// puzzleId of the song open in the review drawer. An id rather than the row,
+  /// so an edit landing in `songs` is reflected in the open drawer instead of it
+  /// holding a stale copy.
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
   const [detectingAll, setDetectingAll] = useState(false);
-  const [savingHookIds, setSavingHookIds] = useState<Set<string>>(new Set());
-  const [hookInputValues, setHookInputValues] = useState<Record<string, string>>({});
+  const [detectProgress, setDetectProgress] = useState({ done: 0, total: 0 });
 
   const { q, status, sort, dir, page } = initialQuery;
 
@@ -156,6 +150,7 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
         }
         setSongs(json.data.songs);
         setCounts(json.data.counts);
+        setLadder(json.data.revealLadder ?? []);
         setTotalPages(json.data.totalPages);
       } catch {
         setError("Couldn't load songs — network error.");
@@ -167,91 +162,52 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
     load();
   }, [load]);
 
-  function stopAudio() {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.src = '';
-      audioRef.current = null;
-    }
-  }
-
-  function handlePlay(song: SongRow) {
-    const alreadyPlaying = playingIdRef.current === song.puzzleId;
-
-    // Stop whatever is currently playing first.
-    stopAudio();
-    playingIdRef.current = null;
-    setPlayingSong(null);
-
-    if (alreadyPlaying) return; // toggle off
-
-    playingIdRef.current = song.puzzleId;
-
-    if (song.externalId) {
-      // YouTube song — show the iframe player.
-      setPlayingSong(song);
-    } else {
-      // Stored audio clip — play via the native Audio API.
-      const audio = new Audio(`/api/admin/songs/${song.puzzleId}/audio`);
-      audioRef.current = audio;
-      audio.play().catch(() => {});
-      setPlayingSong(song);
-
-      audio.addEventListener('ended', () => {
-        if (playingIdRef.current === song.puzzleId) {
-          playingIdRef.current = null;
-          audioRef.current = null;
-          setPlayingSong(null);
+  /// Patch one row in place. The drawer and the row buttons write one song at a
+  /// time and a refetch would reshuffle the page under an open drawer — and, on
+  /// a filtered tab, make the row you just locked or drafted vanish out from
+  /// under you. The row keeps its place with an updated badge until the next
+  /// real load.
+  const applySongUpdate = useCallback(
+    (updated: SongRow) => {
+      const before = songs.find((s) => s.puzzleId === updated.puzzleId);
+      // Every transition this screen makes (lock, unlock, draft, recover) moves
+      // one song between exactly two of the three buckets, so the stat cards can
+      // be adjusted by a delta instead of paying for a recount. `total` never
+      // moves — nothing here creates or deletes a song.
+      if (before) {
+        const from = bucketOf(before);
+        const to = bucketOf(updated);
+        if (from !== to) {
+          setCounts((prev) => ({ ...prev, [from]: prev[from] - 1, [to]: prev[to] + 1 }));
         }
-      }, { once: true });
-    }
-  }
-
-  async function handleDetectHook(song: SongRow) {
-    if (detectingIds.has(song.puzzleId)) return;
-    setDetectingIds((prev) => new Set(prev).add(song.puzzleId));
-    try {
-      const res = await fetch(`/api/admin/songs/${song.puzzleId}/detect-hook`, { method: 'POST' });
-      const json = await res.json();
-      if (res.ok) {
-        setSongs((prev) =>
-          prev.map((s) =>
-            s.puzzleId === song.puzzleId
-              ? { ...s, hookStartMs: json.data.hookStartMs, hookStartAutoDetected: true }
-              : s,
-          ),
-        );
-        setHookInputValues((prev) => {
-          const next = { ...prev };
-          delete next[song.puzzleId];
-          return next;
-        });
-      } else {
-        setError(json?.error?.message ?? 'Hook detection failed.');
       }
-    } catch {
-      setError('Hook detection failed — network error.');
-    } finally {
-      setDetectingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(song.puzzleId);
-        return next;
-      });
-    }
-  }
+      setSongs((prev) => prev.map((s) => (s.puzzleId === updated.puzzleId ? updated : s)));
+    },
+    [songs],
+  );
 
   async function handleDetectAllHooks() {
     if (detectingAll) return;
-    // Only process YouTube songs that haven't been auto-detected yet
-    const pending = songs.filter((s) => s.externalId && !s.hookStartAutoDetected);
+    // Only unlocked, undrafted YouTube songs that no detector has touched yet.
+    // Locked ones are refused by the route anyway (a locked offset is
+    // human-approved and a detector must not overwrite it), drafts aren't headed
+    // for rotation, and re-running on already-detected songs just burns minutes
+    // re-deriving the same numbers.
+    const pending = songs.filter(
+      (s) => s.externalId && !s.hookStartAutoDetected && !s.isLocked && !s.isBlocked,
+    );
     if (pending.length === 0) return;
+
     setDetectingAll(true);
-    setDetectingIds(new Set(pending.map((s) => s.puzzleId)));
-    for (const song of pending) {
+    setDetectProgress({ done: 0, total: pending.length });
+
+    for (const [index, song] of pending.entries()) {
       try {
-        const res = await fetch(`/api/admin/songs/${song.puzzleId}/detect-hook`, { method: 'POST' });
-        const json = await res.json();
-        if (res.ok) {
+        const response = await fetch(`/api/admin/songs/${song.puzzleId}/detect-hook`, {
+          method: "POST",
+        });
+        const json = await response.json();
+        if (response.ok) {
           setSongs((prev) =>
             prev.map((s) =>
               s.puzzleId === song.puzzleId
@@ -261,80 +217,26 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
           );
         }
       } catch {
-        // continue with remaining songs
+        // Keep going — one unreachable video shouldn't abandon the batch.
       } finally {
-        setDetectingIds((prev) => {
-          const next = new Set(prev);
-          next.delete(song.puzzleId);
-          return next;
-        });
+        setDetectProgress({ done: index + 1, total: pending.length });
       }
     }
+
     setDetectingAll(false);
   }
 
-  async function saveHookStart(puzzleId: string, prevMs: number, newMs: number) {
-    if (savingHookIds.has(puzzleId)) return;
-    setSongs((prev) =>
-      prev.map((s) => (s.puzzleId === puzzleId ? { ...s, hookStartMs: newMs } : s)),
-    );
-    setSavingHookIds((prev) => new Set(prev).add(puzzleId));
-    try {
-      const res = await fetch(`/api/admin/songs/${puzzleId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hookStartMs: newMs }),
-      });
-      if (!res.ok) {
-        const json = await res.json();
-        setError(json?.error?.message ?? 'Failed to save hook start.');
-        setSongs((prev) =>
-          prev.map((s) => (s.puzzleId === puzzleId ? { ...s, hookStartMs: prevMs } : s)),
-        );
-      }
-    } catch {
-      setError('Failed to save hook start — network error.');
-      setSongs((prev) =>
-        prev.map((s) => (s.puzzleId === puzzleId ? { ...s, hookStartMs: prevMs } : s)),
-      );
-    } finally {
-      setSavingHookIds((prev) => {
-        const next = new Set(prev);
-        next.delete(puzzleId);
-        return next;
-      });
-    }
-  }
+  const detectableCount = songs.filter(
+    (s) => s.externalId && !s.hookStartAutoDetected && !s.isLocked && !s.isBlocked,
+  ).length;
 
-  function handleAdjustHook(song: SongRow, deltaMs: number) {
-    const newMs = Math.max(0, song.hookStartMs + deltaMs);
-    void saveHookStart(song.puzzleId, song.hookStartMs, newMs);
-  }
+  const reviewing = songs.find((s) => s.puzzleId === reviewingId) ?? null;
 
-  function handleHookInputChange(puzzleId: string, value: string) {
-    setHookInputValues((prev) => ({ ...prev, [puzzleId]: value }));
-  }
-
-  function handleHookInputCommit(song: SongRow) {
-    const raw = hookInputValues[song.puzzleId];
-    setHookInputValues((prev) => {
-      const next = { ...prev };
-      delete next[song.puzzleId];
-      return next;
-    });
-    if (raw === undefined) return;
-    const seconds = parseFloat(raw);
-    if (isNaN(seconds) || seconds < 0) return;
-    const newMs = Math.round(seconds * 1000);
-    if (newMs === song.hookStartMs) return;
-    void saveHookStart(song.puzzleId, song.hookStartMs, newMs);
-  }
-
-  const statCards: { key: StatusFilter; label: string; value: number }[] = [
-    { key: "all", label: "Total songs", value: counts.total },
-    { key: "active", label: "In catalog", value: counts.active },
-    { key: "removed", label: "Removed", value: counts.removed },
-    { key: "missing-clip", label: "Missing clip", value: counts.missingClip },
+  const statCards: { key: StatusFilter; label: string; value: number; hint: string }[] = [
+    { key: "all", label: "Total songs", value: counts.total, hint: "in the catalog" },
+    { key: "locked", label: "Locked", value: counts.locked, hint: "playable" },
+    { key: "in-review", label: "In review", value: counts.inReview, hint: "not played yet" },
+    { key: "draft", label: "Drafts", value: counts.draft, hint: "set aside, recoverable" },
   ];
 
   return (
@@ -343,6 +245,16 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
         <ImportYoutubeModal onImported={load} />
         <AddSongModal onCreated={load} />
       </div>
+
+      {counts.locked === 0 && counts.total > 0 && (
+        <div className="rounded-2xl border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-sm text-(--text-dim)">
+          <span className="font-medium text-amber-600 dark:text-amber-400">
+            No songs are locked.
+          </span>{" "}
+          Only locked songs are sampled into runs or offered by the guess typeahead, so the game has
+          nothing to play until at least a few are reviewed and locked.
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {statCards.map((card) => {
@@ -364,6 +276,7 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
             >
               <p className="text-2xl font-bold text-(--text)">{card.value}</p>
               <p className="mt-1 text-xs text-(--text-dim)">{card.label}</p>
+              <p className="text-[10px] text-(--text-faint)">{card.hint}</p>
             </Link>
           );
         })}
@@ -390,7 +303,6 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
         </form>
 
         <div className="flex flex-wrap items-center gap-3">
-          {/* Newest shortcut — active by default */}
           <Link
             href={buildHref({ q, status: status === "all" ? undefined : status, sort: "newest" })}
             className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
@@ -442,15 +354,17 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium">
                 <div className="flex items-center gap-2">
-                  <span>hookStart</span>
+                  <span>Hook</span>
                   <button
                     type="button"
                     onClick={handleDetectAllHooks}
-                    disabled={detectingAll || songs.filter((s) => s.externalId && !s.hookStartAutoDetected).length === 0}
-                    title="Auto-detect hook start for songs not yet detected"
+                    disabled={detectingAll || detectableCount === 0}
+                    title="Run silence detection on every un-detected, unlocked, undrafted song on this page"
                     className="rounded border border-(--hairline) px-2 py-0.5 text-[10px] font-medium text-(--text-faint) transition hover:border-amber-500 hover:text-amber-500 disabled:cursor-wait disabled:opacity-50"
                   >
-                    {detectingAll ? "detecting…" : "Detect All"}
+                    {detectingAll
+                      ? `detecting ${detectProgress.done}/${detectProgress.total}…`
+                      : `Detect ${detectableCount || ""}`.trim()}
                   </button>
                 </div>
               </th>
@@ -466,125 +380,81 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
               </tr>
             )}
             {!isLoading &&
-              songs.map((song) => {
-                const isPlaying = playingSong?.puzzleId === song.puzzleId;
-                return (
-                  <tr
-                    key={song.puzzleId}
-                    className="border-b border-(--hairline) transition last:border-0 hover:bg-(--surface-hover)"
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <CoverArt title={song.title} artist={song.artist} album={song.album} />
-                        <span className="font-medium text-(--text)">{song.title}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-(--text-dim)">{song.artist}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-(--text-dim)">{song.popularity}</span>
-                        <span className="h-1.5 w-16 overflow-hidden rounded-full bg-(--surface)">
-                          <span
-                            className={`block h-full rounded-full ${popularityTone(song.popularity)}`}
-                            style={{ width: `${song.popularity}%` }}
-                          />
+              songs.map((song) => (
+                <tr
+                  key={song.puzzleId}
+                  className="border-b border-(--hairline) transition last:border-0 hover:bg-(--surface-hover)"
+                >
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <CoverArt title={song.title} artist={song.artist} album={song.album} />
+                      <span className="font-medium text-(--text)">{song.title}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-(--text-dim)">{song.artist}</td>
+                  <td className="px-4 py-3">
+                    <PopularityCell song={song} onSaved={applySongUpdate} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-col items-start gap-1">
+                      {song.isBlocked ? (
+                        <span className="rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-600 dark:text-amber-400">
+                          Draft
                         </span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                          song.isBlocked
-                            ? "bg-red-500/10 text-red-600 dark:text-red-400"
-                            : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                        }`}
-                      >
-                        {song.isBlocked ? "Removed" : "In catalog"}
+                      ) : song.isLocked ? (
+                        <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                          🔒 Locked
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-violet-500/10 px-2.5 py-1 text-xs font-medium text-violet-600 dark:text-violet-400">
+                          In review
+                        </span>
+                      )}
+                      {!song.externalId && (
+                        <span className="text-[10px] text-amber-500">no video</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs tabular-nums text-(--text-dim)">
+                        {formatHookTime(song.hookStartMs)}
                       </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleAdjustHook(song, -1000)}
-                          disabled={savingHookIds.has(song.puzzleId) || song.hookStartMs <= 0}
-                          title="Decrease hook start by 1s"
-                          className="flex h-6 w-6 items-center justify-center rounded border border-(--hairline) text-xs text-(--text-faint) transition hover:border-violet-500 hover:text-violet-500 disabled:cursor-not-allowed disabled:opacity-40"
+                      {song.hookStartAutoDetected && (
+                        <span
+                          title="Set by the silence detector — not yet confirmed by ear"
+                          className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-amber-500"
                         >
-                          −
-                        </button>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.1"
-                          disabled={savingHookIds.has(song.puzzleId)}
-                          value={
-                            hookInputValues[song.puzzleId] !== undefined
-                              ? hookInputValues[song.puzzleId]
-                              : (song.hookStartMs / 1000).toFixed(1)
-                          }
-                          onChange={(e) => handleHookInputChange(song.puzzleId, e.target.value)}
-                          onBlur={() => handleHookInputCommit(song)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.currentTarget.blur();
-                            } else if (e.key === 'Escape') {
-                              setHookInputValues((prev) => {
-                                const next = { ...prev };
-                                delete next[song.puzzleId];
-                                return next;
-                              });
-                              e.currentTarget.blur();
-                            }
-                          }}
-                          className="w-16 rounded border border-(--hairline) bg-(--surface) px-1.5 py-0.5 text-center text-xs font-medium text-(--text-dim) outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500/30 disabled:cursor-wait disabled:opacity-50 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleAdjustHook(song, 1000)}
-                          disabled={savingHookIds.has(song.puzzleId)}
-                          title="Increase hook start by 1s"
-                          className="flex h-6 w-6 items-center justify-center rounded border border-(--hairline) text-xs text-(--text-faint) transition hover:border-violet-500 hover:text-violet-500 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          +
-                        </button>
-                        {song.externalId && (
-                          <button
-                            type="button"
-                            onClick={() => handleDetectHook(song)}
-                            disabled={detectingIds.has(song.puzzleId)}
-                            title="Auto-detect hook start"
-                            className="ml-1 flex h-6 items-center justify-center rounded border border-(--hairline) px-1.5 text-[10px] font-medium text-(--text-faint) transition hover:border-amber-500 hover:text-amber-500 disabled:cursor-wait disabled:opacity-50"
-                          >
-                            {detectingIds.has(song.puzzleId) ? "…" : "⏱"}
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handlePlay(song)}
-                          title={isPlaying ? "Stop" : song.externalId ? `Play from ${(song.hookStartMs / 1000).toFixed(1)}s (YouTube)` : "Play stored clip"}
-                          className={`flex h-7 w-7 items-center justify-center rounded-full text-xs transition ${
-                            isPlaying
-                              ? "bg-violet-600 text-white"
-                              : "border border-(--hairline) text-(--text-faint) hover:border-violet-500 hover:text-violet-500"
-                          }`}
-                        >
-                          {isPlaying ? "■" : "▶"}
-                        </button>
-                        <DeleteSongButton
-                          puzzleId={song.puzzleId}
-                          title={song.title}
-                          onDeleted={load}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                          auto
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setReviewingId(song.puzzleId)}
+                        disabled={!song.externalId}
+                        title={
+                          song.externalId
+                            ? "Listen and set the hook start"
+                            : "No YouTube video id — nothing to listen to"
+                        }
+                        className="rounded-md border border-violet-500/40 px-2.5 py-1 text-xs font-medium text-violet-600 transition hover:bg-violet-500/10 disabled:cursor-not-allowed disabled:opacity-40 dark:text-violet-400"
+                      >
+                        {song.isBlocked ? "Open ↗" : song.isLocked ? "Review ↗" : "Set hook ↗"}
+                      </button>
+                      <DraftSongButton song={song} onSaved={applySongUpdate} />
+                      <DeleteSongButton
+                        puzzleId={song.puzzleId}
+                        title={song.title}
+                        onDeleted={load}
+                      />
+                    </div>
+                  </td>
+                </tr>
+              ))}
             {!isLoading && songs.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-4 py-10 text-center text-(--text-faint)">
@@ -628,16 +498,157 @@ export function SongsList({ initialQuery }: { initialQuery: SongsQuery }) {
         </div>
       </div>
 
-      {playingSong?.externalId && (
-        <YouTubePlayer
-          song={playingSong}
-          onClose={() => {
-            stopAudio();
-            playingIdRef.current = null;
-            setPlayingSong(null);
-          }}
+      {reviewing && (
+        <SongReviewDrawer
+          // Remount per song: the editor holds a decoded AudioBuffer and an
+          // AudioContext, and unmounting is what tears those down. Reusing the
+          // instance across songs would leak both.
+          key={reviewing.puzzleId}
+          song={reviewing}
+          ladder={ladder}
+          onClose={() => setReviewingId(null)}
+          onSaved={applySongUpdate}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * The Popularity column, editable in place.
+ *
+ * Popularity is normally telemetry's to move, but it decides which difficulty
+ * band a puzzle is sampled into, and a mis-seeded number is obvious exactly
+ * here — reading down the column against titles you recognise. So it is edited
+ * here too, rather than through a round trip to the edit form, which owns
+ * seedPopularity (the original signal) and not this.
+ *
+ * Committing needs a deliberate gesture — Enter or the ✓ — because this is a
+ * bare number in a dense table and a blur-to-save would let a stray click
+ * anywhere on the page write a half-typed value.
+ */
+function PopularityCell({
+  song,
+  onSaved,
+}: {
+  song: SongRow;
+  onSaved: (song: SongRow) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(song.popularity));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function startEditing() {
+    setDraft(String(song.popularity));
+    setError(null);
+    setEditing(true);
+  }
+
+  function cancel() {
+    setEditing(false);
+    setError(null);
+  }
+
+  async function save() {
+    const value = Number(draft);
+    if (!Number.isInteger(value) || value < 0 || value > 100) {
+      setError("0–100");
+      return;
+    }
+    if (value === song.popularity) {
+      setEditing(false);
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/admin/songs/${song.puzzleId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ popularity: value }),
+      });
+      const json = await response.json().catch(() => null);
+      if (!response.ok) {
+        setError(json?.error?.message ?? "Couldn't save.");
+        return;
+      }
+      onSaved({ ...song, popularity: json.data.popularity });
+      setEditing(false);
+    } catch {
+      setError("Network error.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={startEditing}
+        title="Click to retune popularity"
+        className="group flex items-center gap-2 rounded-md px-1 py-0.5 text-left transition hover:bg-(--surface)"
+      >
+        <span className="w-7 tabular-nums text-(--text-dim)">{song.popularity}</span>
+        <span className="h-1.5 w-16 overflow-hidden rounded-full bg-(--surface)">
+          <span
+            className={`block h-full rounded-full ${popularityTone(song.popularity)}`}
+            style={{ width: `${song.popularity}%` }}
+          />
+        </span>
+        <span className="text-[10px] text-(--text-faint) opacity-0 transition group-hover:opacity-100">
+          ✎
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <input
+        // Opened by an explicit click on this cell, so focus belongs in the
+        // field that click opened.
+        autoFocus
+        type="number"
+        min={0}
+        max={100}
+        step={1}
+        value={draft}
+        disabled={saving}
+        aria-label={`Popularity for ${song.title}`}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void save();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            cancel();
+          }
+        }}
+        className="w-16 rounded-md border border-violet-500 bg-(--surface) px-2 py-1 text-xs tabular-nums text-(--text) outline-none focus:ring-2 focus:ring-violet-500/20"
+      />
+      <button
+        type="button"
+        onClick={() => void save()}
+        disabled={saving}
+        title="Save popularity"
+        className="rounded-md border border-emerald-500/40 px-1.5 py-1 text-xs text-emerald-600 transition hover:bg-emerald-500/10 disabled:opacity-40 dark:text-emerald-400"
+      >
+        {saving ? "…" : "✓"}
+      </button>
+      <button
+        type="button"
+        onClick={cancel}
+        disabled={saving}
+        title="Cancel"
+        className="rounded-md border border-(--hairline) px-1.5 py-1 text-xs text-(--text-faint) transition hover:bg-(--surface-hover) disabled:opacity-40"
+      >
+        ✕
+      </button>
+      {error && <span className="text-[10px] text-red-500">{error}</span>}
     </div>
   );
 }

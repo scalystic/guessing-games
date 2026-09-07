@@ -82,16 +82,11 @@ export function RoomLobby({ mp, roomCode, onLeave }: Readonly<Props>) {
     }),
   ].sort((a, b) => (a.id === "welcome" ? -1 : b.id === "welcome" ? 1 : 0));
 
-  if (phase === "connecting" || !room) {
-    return (
-      <LobbyShell onLeave={requestLeave} subtitle="Connecting…">
-        <div className="flex flex-1 items-center justify-center rounded-[14px] border border-(--hairline) bg-(--surface) p-10">
-          <p className="text-sm text-(--text-faint)">Connecting to room {roomCode}…</p>
-        </div>
-      </LobbyShell>
-    );
-  }
-
+  // BEFORE the connecting branch below, deliberately. A rejected room:join
+  // ("Room not found", "You are not in this room", "Room was cancelled") sets
+  // the error phase but never a `room` — so while this sat second, `!room` won
+  // every time and a failed join rendered "Connecting to room …" forever. The
+  // one screen in the app that could not be waited out: nothing was coming.
   if (phase === "error") {
     return (
       <LobbyShell onLeave={requestLeave} subtitle="Couldn't join">
@@ -104,6 +99,16 @@ export function RoomLobby({ mp, roomCode, onLeave }: Readonly<Props>) {
           >
             Back
           </button>
+        </div>
+      </LobbyShell>
+    );
+  }
+
+  if (phase === "connecting" || !room) {
+    return (
+      <LobbyShell onLeave={requestLeave} subtitle="Connecting…">
+        <div className="flex flex-1 items-center justify-center rounded-[14px] border border-(--hairline) bg-(--surface) p-10">
+          <p className="text-sm text-(--text-faint)">Connecting to room {roomCode}…</p>
         </div>
       </LobbyShell>
     );

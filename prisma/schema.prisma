@@ -273,6 +273,37 @@ model PuzzleAsset {
   @@unique([puzzleId, kind])
 }
 
+/// Why a track is not the original studio recording of its song.
+///
+/// NULL is the good case and the overwhelming majority: this row is the
+/// original. Every other value marks a track a player would hear and not
+/// recognise as the song they know, which is what makes it unfit for a run.
+enum SongVariant {
+  /// No vocals — a score cut, or a "Instrumental"/"Karaoke"/"Backing Track"
+  /// release. Unguessable by design: the lyric IS the clue.
+  INSTRUMENTAL
+  /// Lo-fi flip, slowed + reverb, chill remix. Same vocal, wrong tempo and key.
+  LOFI
+  /// Club/DJ/dance re-edit of the original recording.
+  REMIX
+  /// Two or more songs stitched together — mashup, medley, mixtape.
+  MASHUP
+  /// Someone other than the original artist re-recorded it, including
+  /// unplugged and acoustic re-cuts.
+  COVER
+  /// Recorded in front of an audience rather than in a studio.
+  LIVE
+  /// A sanctioned alternate cut from the same sessions — reprise, film
+  /// version, male/female version. Closest to the original of any variant,
+  /// but still not the cut a player has in their head.
+  ALTERNATE
+  /// Not a variant at all: the row is the WRONG TRACK. An ingest matched on
+  /// title alone and pulled in an unrelated song that happens to share a name.
+  /// Distinct from the rest because the others are fixable by exclusion and
+  /// this one is only fixable by re-ingesting the right master.
+  MISMATCH
+}
+
 /// Songless detail table. 1:1 with Puzzle — puzzleId IS the primary key.
 /// A second game adds its own table here and touches nothing else.
 model Song {
@@ -296,6 +327,17 @@ model Song {
   /// answers.
   movie  String?
 
+  /// NULL = this is the original recording. Anything else says why it is not,
+  /// and is a reason to keep the track out of a run — see SongVariant.
+  ///
+  /// Deliberately NOT folded into Puzzle.isBlocked or Song.isLocked. Those are
+  /// decisions ("pull this", "not signed off yet"); this is an observation about
+  /// what the recording IS, which stays true no matter what anyone decides to
+  /// do about it. Keeping it separate is what lets the catalog hold a lo-fi cut
+  /// on purpose one day without that being indistinguishable from a licensing
+  /// pull.
+  variantType SongVariant?
+
   releaseYear Int?
   decade      Int?
   genres      String[]
@@ -306,6 +348,34 @@ model Song {
   hookStartMs Int  @default(0)
 
   hookStartAutoDetected Boolean @default(false)
+
+  /// The review gate. FALSE means "in review": an admin has not yet listened to
+  /// this track and signed off on hookStartMs, so it is never sampled into a run
+  /// and never offered by the guess typeahead (lib/game/selection.ts and
+  /// api/games/[slug]/search — the two have to stay in lockstep). TRUE means an
+  /// admin auditioned it in the hook editor and locked the offset in.
+  ///
+  /// Deliberately separate from Puzzle.isActive / Puzzle.isBlocked. Those two say
+  /// "this track should not be in the catalog at all" — a licensing pull, a bad
+  /// import. This says "the track belongs here, its hook is not signed off yet",
+  /// which is a workflow state every newly imported song passes through exactly
+  /// once. Collapsing them would make "unreviewed" indistinguishable from
+  /// "withdrawn" on the admin list, which is the one distinction the review
+  /// queue exists to show.
+  ///
+  /// Locked is also WRITE-PROTECTED, not just a flag: PATCH
+  /// /api/admin/songs/[puzzleId] refuses to move hookStartMs while this is true,
+  /// so correcting a live song is always unlock -> edit -> lock. That is what
+  /// stops a stray nudge in the editor from silently re-cutting a track players
+  /// are already being scored on.
+  isLocked Boolean @default(false)
+  /// When the current lock was taken. Cleared on unlock, so it always describes
+  /// the lock in force rather than the last one ever taken.
+  lockedAt DateTime?
+  /// Player.id of the admin who locked it. No FK: an admin's row being deleted
+  /// must not cascade into the catalog, and this is an audit breadcrumb rather
+  /// than something anything joins on.
+  lockedById String?
 
   isrc       String?
   externalId String?
@@ -329,6 +399,14 @@ model Song {
   @@index([createdAt])
   /// Backs the era filter in puzzle selection (src/lib/game/selection.ts).
   @@index([decade])
+  /// Both halves of the review queue: the admin list filtered to "in review",
+  /// and the playability test the sampler and the typeahead now share.
+  @@index([isLocked])
+  /// Backs the two queries this column exists for: the admin list filtered to
+  /// a variant, and the sampler excluding all of them. Low cardinality, but the
+  /// non-null rows are a ~8% minority — which is exactly the shape a btree
+  /// serves well when the predicate selects them.
+  @@index([variantType])
   /// Trigram GIN, not btree — the typeahead matches on substrings and
   /// similarity, which a btree can't serve. Declared here rather than left to a
   /// raw migration so Prisma keeps managing it; the pg_trgm extension it depends

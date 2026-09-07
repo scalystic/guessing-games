@@ -205,7 +205,7 @@ export default async function AdminDashboardPage() {
     // Catalog
     totalSongs,
     activeSongs,
-    blockedSongs,
+    draftedSongs,
     songsMissingClip,
 
     // Users
@@ -337,7 +337,7 @@ export default async function AdminDashboardPage() {
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <StatCard value={totalSongs}       label="Total songs"       href="/admin/songs" />
           <StatCard value={activeSongs}      label="In catalog"        href="/admin/songs?status=active"       accent="green" />
-          <StatCard value={blockedSongs}     label="Removed"           href="/admin/songs?status=removed"      accent={blockedSongs > 0 ? "red" : "default"} />
+          <StatCard value={draftedSongs}     label="Drafts"            href="/admin/songs?status=draft"        accent={draftedSongs > 0 ? "yellow" : "default"} />
           <StatCard value={songsMissingClip} label="Missing audio clip" href="/admin/songs?status=missing-clip" accent={songsMissingClip > 0 ? "yellow" : "default"} />
         </div>
       </Section>

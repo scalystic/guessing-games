@@ -86,6 +86,14 @@ type RawExecutor = Pick<typeof prisma, "$queryRaw">;
 /// Note what this drops with it: `maxAttempts` no longer constrains selection at
 /// all. The stage ladder for a YouTube round is a play-window the client applies
 /// to the stream, not a set of byte offsets that has to exist up front.
+///
+/// REVIEW GATE: playability also requires `s."isLocked" = true`. A YouTube id
+/// only says audio exists — it says nothing about whether hookStartMs points at
+/// the hook or at four seconds of dead air, and an unreviewed offset makes a
+/// round unplayable for everyone who draws it. The lock is a human having
+/// listened; see the doc comment on Song.isLocked. Same predicate has to hold in
+/// api/games/[slug]/search, or the typeahead offers guesses this can never ask
+/// for.
 export async function samplePuzzle(
   args: SampleArgs,
   db: RawExecutor = prisma,
@@ -127,6 +135,8 @@ export async function samplePuzzle(
         -- attempt to WRITE an interpolation here too, escaped or not. The old
         -- predicate is spelled out in the doc comment on samplePuzzle() instead.
         AND s."externalId" IS NOT NULL
+        -- ...and an admin has signed off on where its hook starts.
+        AND s."isLocked" = true
         AND p.id <> ALL(${args.excludePuzzleIds}::text[])
         ${decadeClause(args.decadeFilter)}
         AND NOT EXISTS (

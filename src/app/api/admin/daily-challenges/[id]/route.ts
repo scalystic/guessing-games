@@ -120,6 +120,25 @@ export async function PUT(request: Request, ctx: Ctx): Promise<Response> {
         );
       }
 
+      // Same reason as the repeat check below, and the same reason POST
+      // re-asserts it: a hand-built round list is the one path into a run that
+      // never calls samplePuzzle(), so the review gate from the sampler's WHERE
+      // clause has to be restated wherever rounds are written by hand.
+      const inReview = await prisma.song.findMany({
+        where: { puzzleId: { in: songs.map((s) => s.puzzleId) }, isLocked: false },
+        select: { puzzleId: true, title: true },
+      });
+      if (inReview.length > 0) {
+        return jsonError(
+          422,
+          "songs_in_review",
+          `${inReview.length} song(s) are still in review. Lock them in the songs admin before scheduling a daily.`,
+          Object.fromEntries(
+            inReview.map((s) => [s.puzzleId, [`"${s.title}" is in review — not locked.`]]),
+          ),
+        );
+      }
+
       // Mirrors the search endpoint's disabled-in-picker state: the picker
       // can only stop a click, not a request built by hand, so the rule is
       // re-checked here before anything is written.

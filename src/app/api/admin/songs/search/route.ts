@@ -42,6 +42,11 @@ export async function GET(request: Request): Promise<Response> {
         artist: true,
         album: true,
         externalId: true,
+        // Unlocked songs are still returned rather than filtered out, so the
+        // picker can say "in review" instead of silently having no results for a
+        // title the admin can plainly see in the catalog. POST
+        // /api/admin/daily-challenges rejects them on submit.
+        isLocked: true,
       },
       orderBy: { title: "asc" },
     });

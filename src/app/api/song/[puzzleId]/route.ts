@@ -67,7 +67,12 @@ export async function PUT(request: Request, { params }: RouteParams): Promise<Re
           releaseYear: data.releaseYear ?? null,
           decade,
           genres: data.genres,
-          hookStartMs: data.hookStartMs,
+          // hookStartMs deliberately omitted, for the same reason popularity is
+          // omitted above: this endpoint is not its owner. It is set by ear in
+          // the review drawer through PATCH /api/admin/songs/[puzzleId], which
+          // is also the only place that enforces "locked songs can't be
+          // re-cut". Writing it here would be a second, unguarded door into the
+          // one value the whole review workflow exists to protect.
           isrc: data.isrc ?? null,
           externalId: data.externalId ?? null,
           aliases: data.aliases,

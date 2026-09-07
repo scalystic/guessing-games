@@ -55,5 +55,9 @@ next-env.d.ts
 
 # temp
 
+# Admin hook-editor audio cache. Regenerated on demand from YouTube by
+# lib/admin/source-audio.ts — deleting it is always safe.
+/.cache/
+
 # wrangler
 .wrangler/

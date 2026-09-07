@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, type FormEvent } from "react";
+import { useState, useTransition, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -109,7 +109,10 @@ export default function SongForm({ puzzleId, initial }: Props) {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
-      hookStartMs: values.hookStartMs ? Number(values.hookStartMs) : 0,
+      // Sent so SongMetadataSchema still validates, and set to the value already
+      // stored so a hand-inspected request body isn't misleading — the PUT
+      // handler deliberately does not write it. The review drawer owns it.
+      hookStartMs: initial.hookStartMs,
       seedPopularity: Number(values.seedPopularity),
       licenseSource: values.licenseSource || null,
       ingestSource: values.ingestSource || null,
@@ -212,17 +215,39 @@ export default function SongForm({ puzzleId, initial }: Props) {
           onChange={(v) => setField("aliases", v)}
           error={fieldErrors.aliases}
         />
-        <Field
-          name="hookStartMs"
-          label="Hook start (ms)"
-          type="number"
-          value={values.hookStartMs}
-          onChange={(v) => setField("hookStartMs", v)}
-          error={fieldErrors.hookStartMs}
-        />
+        {/*
+          hookStartMs used to be a plain number box here. It isn't any more, and
+          this form no longer writes it at all (see the PUT handler).
+
+          It has one owner now: the review drawer on /admin/songs, where you can
+          hear the value you're typing and where locking it is the same gesture
+          as approving it. A second, silent, unlocked way to set it — a text
+          field with no audio next to it, on a page about spelling artist names —
+          would defeat the review gate entirely.
+        */}
+        <div className="rounded-lg border border-dashed border-(--hairline) px-3.5 py-3">
+          <p className={labelClass}>Hook start</p>
+          <p className="mt-1 text-sm text-(--text-dim)">
+            Set on{" "}
+            <Link href="/admin/songs" className="text-violet-500 underline decoration-dotted">
+              Manage songs
+            </Link>{" "}
+            — open the song and listen. Currently{" "}
+            <span className="font-mono tabular-nums">{initial.hookStartMs}ms</span>.
+          </p>
+        </div>
         <Field
           name="seedPopularity"
           label="Seed popularity (0–100) — retunes seed, not live popularity"
+          hint={
+            <>
+              Live popularity is the one sampling reads. Edit it in the Popularity column on{" "}
+              <Link href="/admin/songs" className="text-violet-500 underline decoration-dotted">
+                Manage songs
+              </Link>
+              .
+            </>
+          }
           type="number"
           required
           value={values.seedPopularity}
@@ -283,7 +308,7 @@ export default function SongForm({ puzzleId, initial }: Props) {
             onChange={(e) => setField("isBlocked", e.target.checked)}
             className="h-4 w-4"
           />
-          Blocked (removed from catalog)
+          Draft (set aside — never played, recoverable)
         </label>
       </fieldset>
 
@@ -309,6 +334,7 @@ export default function SongForm({ puzzleId, initial }: Props) {
 function Field({
   name,
   label,
+  hint,
   type = "text",
   required,
   value,
@@ -317,6 +343,7 @@ function Field({
 }: {
   name: string;
   label: string;
+  hint?: ReactNode;
   type?: string;
   required?: boolean;
   value: string;
@@ -337,6 +364,7 @@ function Field({
         onChange={(e) => onChange(e.target.value)}
         className={inputClass}
       />
+      {hint && <p className="text-xs text-(--text-faint)">{hint}</p>}
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error[0]}</p>}
     </div>
   );

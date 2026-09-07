@@ -7,7 +7,7 @@ import { AttemptTimeline } from "@/components/AttemptTimeline";
 import { CoverArt } from "@/components/CoverArt";
 import { PlayerBar } from "@/components/PlayerBar";
 import { ProfileMenu } from "@/components/ProfileMenu";
-import { toPlayerView } from "@/lib/multiplayer/player-view";
+import { toPlayerView, type PlayerView } from "@/lib/multiplayer/player-view";
 import { previewPoints } from "@/lib/game/scoring/preview";
 import { newIdempotencyKey, type CatalogMatch, type RoundHint } from "@/lib/api/runs";
 import type { GuessRecord, PendingAction } from "@/hooks/useMelodleGame";
@@ -31,6 +31,25 @@ type AttemptOutcome = {
   points: number | null;
   currentStreak: number;
   hint: RoundHint | null;
+  /// On a PENDING outcome this is the round still being played — the same video
+  /// already loaded. On a resolved one it is the NEXT round's, which this screen
+  /// deliberately ignores: the room decides when everyone moves on, and jumping
+  /// the player's deck ahead would leak the next song during the reveal.
+  youtubeVideoId: string | null;
+  hookStartMs: number;
+};
+
+/// What GET /api/runs/[runId] says about the round currently open on this
+/// player's run. The same payload a solo reload resumes from — used here on
+/// every round change, which makes a mid-game reconnect free.
+type CurrentRoundState = {
+  roundIndex: number;
+  stageReached: number;
+  attemptsUsed: number;
+  attempts: { isSkip: boolean; isCorrect: boolean; song: { title: string; artist: string } | null }[];
+  hint: RoundHint | null;
+  youtubeVideoId: string | null;
+  hookStartMs: number;
 };
 
 async function callRun(
@@ -64,8 +83,9 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
   const views = players.map((p) => toPlayerView(p, myPlayerId));
   const sortedLeaderboard = [...views].sort((a, b) => b.score - a.score);
 
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [audioLoading, setAudioLoading] = useState(false);
+  const [youtubeVideoId, setYoutubeVideoId] = useState<string | null>(null);
+  const [hookStartMs, setHookStartMs] = useState(0);
+  const [roundLoading, setRoundLoading] = useState(false);
   const [stageReached, setStageReached] = useState(1);
   const [guesses, setGuesses] = useState<GuessRecord[]>([]);
   const [guessedPuzzleIds, setGuessedPuzzleIds] = useState<Set<string>>(new Set());
@@ -77,46 +97,70 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
   const [hint, setHint] = useState<RoundHint | null>(null);
   const [nextRoundSecondsLeft, setNextRoundSecondsLeft] = useState(0);
 
-  const objectUrlRef = useRef<string | null>(null);
   const generationRef = useRef(0);
-  const roundIndexRef = useRef(room?.currentRound ?? 1);
+  /// The round this screen has already loaded. Null until the first load, so a
+  /// re-entry into `playing` (round results closing) can tell "same round, keep
+  /// what's on screen" from "new round, go fetch it".
+  const loadedRoundRef = useRef<number | null>(null);
 
-  function releaseAudio() {
-    if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current);
-      objectUrlRef.current = null;
-    }
-  }
-  useEffect(() => releaseAudio, []);
-
-  const loadAudio = useCallback(async (runId: string, runToken: string, generation: number) => {
-    setAudioLoading(true);
+  // YOUTUBE-ONLY: this used to GET /api/runs/[runId]/audio and hand PlayerBar a
+  // blob URL for the stage prefix. That route is retired (410) and the room's
+  // puzzle picker only ever draws songs with a video id, so the round is loaded
+  // from the run's own state instead: which video, where its hook starts, and
+  // how far up the ladder this player already is. Everything a solo reload
+  // resumes from, which is why a mid-round reconnect lands correctly too.
+  const loadRound = useCallback(async (runId: string, runToken: string, roomRound: number, generation: number) => {
+    setRoundLoading(true);
     try {
-      const res = await fetch(`/api/runs/${runId}/audio`, { headers: { Authorization: `Bearer ${runToken}` } });
+      const res = await fetch(`/api/runs/${runId}`, { headers: { Authorization: `Bearer ${runToken}` } });
       if (!res.ok || generation !== generationRef.current) return;
-      const blob = await res.blob();
+      const body = await res.json();
       if (generation !== generationRef.current) return;
-      const stageHeader = res.headers.get("x-reveal-stage");
-      if (stageHeader) setStageReached(Number(stageHeader));
-      releaseAudio();
-      const url = URL.createObjectURL(blob);
-      objectUrlRef.current = url;
-      setAudioUrl(url);
+
+      const current: CurrentRoundState | null = body?.data?.current ?? null;
+      // Resolving a round opens the next one on this player's run immediately,
+      // while the room deliberately holds everyone on the reveal for a few
+      // seconds. So a run can legitimately be a round AHEAD of the room — and
+      // playing what it hands back would put the next song in this player's ear
+      // during the current round's reveal. The room's round is the only one this
+      // screen ever plays; anything else means "you're done, wait".
+      if (!current || current.roundIndex !== roomRound) {
+        setYoutubeVideoId(null);
+        setRoundDone(true);
+        return;
+      }
+
+      setYoutubeVideoId(current.youtubeVideoId);
+      setHookStartMs(current.hookStartMs);
+      setStageReached(current.stageReached);
+      setHint(current.hint);
+      // Rebuilt rather than assumed empty: on a reconnect this round may
+      // already have attempts spent against it, and an empty timeline beside a
+      // stage-4 clip is a lie about how many guesses are left.
+      setGuesses(
+        current.attempts.map((a) => ({
+          song: a.song,
+          puzzleId: null,
+          correct: a.isCorrect,
+          skipped: a.isSkip,
+          at: Date.now(),
+        })),
+      );
     } catch {
-      // Leave the previous clip on screen; the Skip/Guess controls stay live.
+      // Leave whatever is on screen; Guess/Skip stay live either way.
     } finally {
-      if (generation === generationRef.current) setAudioLoading(false);
+      if (generation === generationRef.current) setRoundLoading(false);
     }
   }, []);
 
-  // Fresh round: reset local state and pull stage 1 the moment credentials +
-  // a room advance land together. Keyed on room.currentRound rather than
-  // myRun.runId — a reconnect hands out the same runId again but the round
-  // may have moved on underneath it.
+  // Fresh round: reset local state and load it the moment credentials + a room
+  // advance land together. Keyed on room.currentRound rather than myRun.runId —
+  // a reconnect hands out the same runId again but the round may have moved on
+  // underneath it.
   useEffect(() => {
     if (phase !== "playing" || !myRun || !room) return;
-    if (roundIndexRef.current === room.currentRound && audioUrl) return;
-    roundIndexRef.current = room.currentRound;
+    if (loadedRoundRef.current === room.currentRound) return;
+    loadedRoundRef.current = room.currentRound;
     const generation = ++generationRef.current;
     setRoundDone(false);
     setGuessedPuzzleIds(new Set());
@@ -124,7 +168,7 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
     setStageReached(1);
     setLastPoints(null);
     setHint(null);
-    void loadAudio(myRun.runId, myRun.runToken, generation);
+    void loadRound(myRun.runId, myRun.runToken, room.currentRound, generation);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, room?.currentRound, myRun?.runId]);
 
@@ -139,9 +183,15 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
       notifyRoundDone(roundIndex, res.outcome);
     } else {
       setHint(res.hint);
-      if (myRun) {
-        const generation = ++generationRef.current;
-        void loadAudio(myRun.runId, myRun.runToken, generation);
+      // YOUTUBE-ONLY: a miss used to mean re-fetching a longer audio prefix.
+      // The stream is already loaded — the longer window is just the new
+      // stageReached above, which PlayerBar reads off the reveal ladder. No
+      // request at all, so the next clip is playable the instant the guess
+      // lands. (The id is re-set only to stay honest if the server ever
+      // disagrees with what's loaded; it's the same value on a PENDING round.)
+      if (res.youtubeVideoId) {
+        setYoutubeVideoId(res.youtubeVideoId);
+        setHookStartMs(res.hookStartMs);
       }
     }
   }
@@ -195,15 +245,25 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myRun, roundDone, pendingAction, room]);
 
-  // Display-only countdown to the round's real, server-enforced 60s budget
+  // Display-only countdown to the round's real, server-enforced budget
   // (ROUND_TIMEOUT_MS in socket-handler.ts) — nothing here forces a skip.
   // Guessing wrong or clicking Skip is the only way to move a stage forward
   // now; if the clock reaches 0 with the round still open, the server itself
   // force-resolves it (forceResolveStragglers), which arrives on this client
   // as the normal round:results broadcast.
+  //
+  // The deadline is NOT a fixed round length: the moment the first player
+  // finishes, the server pulls it in to a short grace window and pushes the new
+  // one down 'round:deadline' (see FIRST_FINISH_GRACE_MS). roundDeadline
+  // changing under this effect re-targets the countdown, which is exactly what
+  // should happen — the clock on screen is always the clock being enforced.
+  //
+  // Keeps ticking after this player is done, deliberately: the wait panel below
+  // needs it to say how long the room can still be held up, instead of an
+  // open-ended "waiting…" that gives no sense of whether to keep watching.
   const [roundSecondsLeft, setRoundSecondsLeft] = useState<number | null>(null);
   useEffect(() => {
-    if (!roundDeadline || roundDone) return;
+    if (!roundDeadline) return;
     const target = new Date(roundDeadline).getTime();
     const tick = () => {
       setRoundSecondsLeft(Math.max(0, Math.ceil((target - Date.now()) / 1000)));
@@ -211,7 +271,19 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
     tick();
     const interval = window.setInterval(tick, 250);
     return () => window.clearInterval(interval);
-  }, [roundDeadline, roundDone]);
+  }, [roundDeadline]);
+
+  // Who is genuinely still guessing — the people this player is waiting on.
+  // A disconnected player is excluded because the server has already counted
+  // them as done (see the disconnect handler); listing them would name someone
+  // who is never going to finish.
+  const stillGuessing = views.filter(
+    (p) =>
+      !p.isYou &&
+      p.status !== "DISCONNECTED" &&
+      p.status !== "LEFT" &&
+      !(roundProgress.get(p.id)?.done ?? false),
+  );
 
   // Exact, not estimated: the real formula (scoring/v1.ts) keys off stage
   // reached, round depth and streak — never a clock — so this is what
@@ -374,11 +446,16 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
 
             <div className="flex flex-col gap-2.5 border-t border-(--hairline) pt-4">
               <PlayerBar
-                audioUrl={audioUrl}
+                // YOUTUBE-ONLY: permanently null here. A room never draws a
+                // puzzle without a video id (see selectRoomPuzzles), so the
+                // stored-clip branch of PlayerBar is unreachable in a room.
+                audioUrl={null}
+                youtubeVideoId={youtubeVideoId}
+                hookStartMs={hookStartMs}
                 revealMs={revealMs}
                 totalMs={totalMs}
                 ladder={revealLadder}
-                loading={audioLoading}
+                loading={roundLoading}
                 waveformSeed={`${myRun?.runId ?? "run"}:${room?.currentRound ?? 1}`}
                 promptSubtitle="Everyone in the room hears the same clip."
               />
@@ -394,13 +471,11 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
             {!roundDone && <HintLadder hint={hint} />}
 
             {roundDone ? (
-              <div className="rounded-[9px] border border-dashed border-(--hairline) bg-(--surface-strong) p-3 text-center text-xs text-(--text-faint)">
-                Waiting for other players to finish…
-              </div>
+              <WaitingForPlayers stillGuessing={stillGuessing} secondsLeft={roundSecondsLeft} />
             ) : (
               <GuessAutocomplete
                 gameSlug={gameSlug}
-                disabled={audioLoading || !myRun || roundDone}
+                disabled={roundLoading || !myRun || roundDone}
                 pendingAction={pendingAction}
                 nextRevealMs={revealLadder[stageReached] ?? null}
                 excludePuzzleIds={guessedPuzzleIds}
@@ -637,6 +712,66 @@ function PointsRing({
           Potential pts
         </span>
       </div>
+    </div>
+  );
+}
+
+// Shown to a player who has finished the round while others are still going.
+//
+// This replaced a static "Waiting for other players to finish…" line, which was
+// the worst moment in the game to sit through: no idea who was being waited on,
+// and no idea whether it would be one second or the round's whole remaining
+// budget. Both are known here — the outstanding players by name, and the real
+// server-enforced deadline (which, once anyone has finished, is the short grace
+// window rather than the full round) — so both are said out loud.
+function WaitingForPlayers({
+  stillGuessing,
+  secondsLeft,
+}: {
+  stillGuessing: PlayerView[];
+  secondsLeft: number | null;
+}) {
+  // The round resolves the instant the last player lands, so this is a
+  // sub-second flicker on the way to the reveal, not a state to dress up.
+  if (stillGuessing.length === 0) {
+    return (
+      <div className="rounded-[9px] border border-dashed border-(--hairline) bg-(--surface-strong) p-3 text-center text-xs text-(--text-faint)">
+        Everyone&apos;s in — revealing the track…
+      </div>
+    );
+  }
+
+  const names =
+    stillGuessing.length <= 2
+      ? stillGuessing.map((p) => p.name).join(" and ")
+      : `${stillGuessing[0]!.name} and ${stillGuessing.length - 1} others`;
+
+  return (
+    <div className="flex flex-col items-center gap-2 rounded-[9px] border border-dashed border-(--hairline) bg-(--surface-strong) p-3.5 text-center">
+      <div className="flex items-center gap-2">
+        <div className="flex -space-x-1.5">
+          {stillGuessing.slice(0, 5).map((p) => (
+            <span
+              key={p.id}
+              className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-(--surface-strong) text-[9px] font-bold text-white"
+              style={{ background: p.color }}
+              title={p.name}
+            >
+              {p.initial}
+            </span>
+          ))}
+        </div>
+        <span className="text-xs text-(--text-dim)">
+          Still guessing: <b className="text-(--text)">{names}</b>
+        </span>
+      </div>
+      {secondsLeft !== null && (
+        <span className="font-mono text-[11px] text-(--text-faint)">
+          {secondsLeft > 0
+            ? `Round ends in ${secondsLeft}s either way`
+            : "Wrapping up the round…"}
+        </span>
+      )}
     </div>
   );
 }

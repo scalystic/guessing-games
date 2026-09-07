@@ -271,6 +271,38 @@ export async function readClipPrefix(
   return bytes;
 }
 
+/// Fetch an object as a stream, without buffering it in the function first.
+///
+/// `readObject` below buffers, which is right for the things it serves — a
+/// ~480 KB clip, a cover image. The admin hook editor's source audio is a
+/// different size class entirely (a lossless decode of a whole track, 10-40 MB),
+/// and holding one of those in a serverless function's memory to hand it
+/// straight back out is waste with a failure mode attached.
+///
+/// Returns null when the object isn't there, so a cache miss is an ordinary
+/// answer rather than an exception to catch.
+export async function readObjectStream(
+  key: string,
+): Promise<{ body: ReadableStream<Uint8Array>; byteSize: number | null; etag: string | null } | null> {
+  const { client, config } = storage();
+
+  try {
+    const result = await client.send(new GetObjectCommand({ Bucket: config.bucket, Key: key }));
+    if (!result.Body) return null;
+    return {
+      // The SDK's Node body is a Readable; transformToWebStream is its
+      // documented bridge to the WHATWG stream a Response wants.
+      body: result.Body.transformToWebStream() as ReadableStream<Uint8Array>,
+      byteSize: result.ContentLength ?? null,
+      etag: result.ETag ?? null,
+    };
+  } catch (error) {
+    const name = (error as { name?: string }).name;
+    if (name === "NotFound" || name === "NoSuchKey") return null;
+    throw error;
+  }
+}
+
 /// Fetch the whole object. Used by the reslice path: recomputing
 /// stageByteOffsets for a new ladder needs every frame of the stored clip.
 export async function readObject(key: string): Promise<Buffer> {

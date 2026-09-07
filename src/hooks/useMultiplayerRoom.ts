@@ -13,8 +13,11 @@ export type UseMultiplayerRoomResult = {
   myPlayerId: string | null
   myRun: { runId: string; runToken: string } | null
   roundResults: RoundResults | null
-  /// ISO timestamp of when the current round's 60s budget runs out — the
-  /// server's own clock (see ROUND_TIMEOUT_MS), not a client guess.
+  /// ISO timestamp of when the current round's budget runs out — the server's
+  /// own clock (see ROUND_TIMEOUT_MS), not a client guess. It can move earlier
+  /// mid-round when the first player finishes and the rest drop to the grace
+  /// window ('round:deadline'), so read it live rather than deriving a fixed
+  /// round length from it once.
   roundDeadline: string | null
   finalRankings: FinalRanking[]
   roundProgress: Map<string, { displayName: string; done: boolean; outcome: 'SOLVED' | 'FAILED' | null; points: number | null }>
@@ -114,6 +117,14 @@ export function useMultiplayerRoom(code: string | null, playerId: string | null)
       setPhase('playing')
       setRoundResults(null)
       setRoundProgress(new Map())
+      setRoundDeadline(deadline)
+    })
+
+    // Deliberately ONLY touches the deadline. This fires mid-round, so
+    // resetting roundResults/roundProgress the way round:start does would blank
+    // out the very "who's still guessing" state the shortened window exists to
+    // explain.
+    socket.on('round:deadline', ({ deadline }) => {
       setRoundDeadline(deadline)
     })
 

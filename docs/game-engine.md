@@ -231,8 +231,9 @@ song almost everyone knows, round 10 is genuinely obscure. Ten rounds have to
 cover the same span that twenty used to, so the ramp is steep — retune
 `rampPerRound` here, not in code.
 
-Sample one active, unblocked puzzle within `±game.sampleWindow` of the target,
-excluding:
+Sample one **playable** puzzle within `±game.sampleWindow` of the target —
+playable meaning active, unblocked, carrying a YouTube id, and **locked** (see
+[The review gate](#the-review-gate) below) — excluding:
 
 - puzzles already in this run (`@@unique([runId, puzzleId])` is the hard stop)
 - puzzles in `PlayerPuzzleHistory` newer than `Game.puzzleCooldownDays`
@@ -242,6 +243,47 @@ because that's your signal the catalog is too thin at that percentile.
 
 Both `targetPopularity` and the sampled `puzzlePopularity` are stored on
 `RunRound` so the difficulty curve can be audited later without replaying runs.
+
+## The review gate
+
+`Song.isLocked` decides whether a song is in the game at all. False means **in
+review**: an admin hasn't listened to it and signed off on `hookStartMs`, so it
+is never sampled and never offered as a guess. True means somebody auditioned it
+in the hook editor and locked the offset in.
+
+**Why a song needs signing off.** `hookStartMs` is where the reveal ladder
+starts, and stage 1 is 400ms. A hook 3s early is 400ms of dead air — the round is
+unplayable for everyone who draws it, and no amount of attempts recovers it. A
+YouTube id proves audio exists; it proves nothing about whether the offset points
+at the hook. Only a person listening does.
+
+**Deliberately separate from `Puzzle.isActive` / `isBlocked`.** Those mean "this
+track shouldn't be in the catalog" — a licensing pull, a bad import. This means
+"the track belongs here, its hook isn't signed off yet", a workflow state every
+imported song passes through exactly once. Collapsing them would make
+*unreviewed* indistinguishable from *withdrawn* on the admin list, which is the
+one distinction the review queue exists to show.
+
+**Four places enforce it**, and they must not drift apart:
+
+| Where | Why it has to be there |
+| --- | --- |
+| `lib/game/selection.ts` | the sampler — the primary gate |
+| `api/games/[slug]/search` | the guess typeahead. A candidate the sampler will never serve is a guess that can never be right (authority #1 — the typeahead hands back real `puzzleId`s) |
+| `POST /api/admin/daily-challenges` | a challenge is a hand-built round list that bypasses `samplePuzzle()` entirely |
+| `PUT /api/admin/daily-challenges/[id]` | same, for edits |
+
+**Locked is a write gate, not a label.** `PATCH /api/admin/songs/[puzzleId]`
+returns 409 on any `hookStartMs` change while a song is locked, and so does the
+auto-detector. Correcting a live song is always unlock → edit → lock, which makes
+it a deliberate act with a visible intermediate state (the song drops out of
+rotation while unlocked) rather than a stray nudge silently re-cutting a track
+players are being scored on. `PUT /api/song/[puzzleId]` — the metadata form —
+deliberately does not write `hookStartMs` at all, for the same reason.
+
+Placing the offset needs real decoded audio, which is a deployment concern of its
+own; see `lib/admin/source-audio.ts` and the audio-extraction section of the
+backend repo's README.
 
 ## Difficulty self-tuning
 

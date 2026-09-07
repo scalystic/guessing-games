@@ -8,6 +8,7 @@ import { useMelodleGame } from "@/hooks/useMelodleGame";
 import { PlayerBar } from "@/components/PlayerBar";
 import { AttemptTimeline } from "@/components/AttemptTimeline";
 import { GuessAutocomplete } from "@/components/GuessAutocomplete";
+import { MissFlash } from "@/components/MissFlash";
 import { ResultPanel } from "@/components/ResultPanel";
 import { ProfileMenu } from "@/components/ProfileMenu";
 import { Modal } from "@/components/Modal";
@@ -422,6 +423,8 @@ function DailyGame({
               </div>
             </div>
           ) : null}
+
+          {!resolved ? <MissFlash feedback={game.miss} onDone={game.dismissMiss} /> : null}
 
           {resolved && game.reveal ? (
             <ResultPanel

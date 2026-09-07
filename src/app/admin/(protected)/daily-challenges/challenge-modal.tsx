@@ -12,6 +12,9 @@ type SongResult = {
   /// dayKey of the nearest daily challenge already using this song within the
   /// 30-day no-repeat window, or null if it's free to pick.
   recentDailyUseDayKey: string | null;
+  /// False = still in review: nobody has signed off on its hookStartMs, so it
+  /// can't be scheduled. POST /api/admin/daily-challenges rejects these too.
+  isLocked: boolean;
 };
 
 type RoundSlot = {
@@ -332,7 +335,9 @@ export function ChallengeModal({ challenge, onClose, onSaved }: Props) {
                             (results[round.roundIndex] ?? []).length > 0 && (
                               <div className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-xl border border-(--hairline) bg-(--surface-strong) shadow-xl">
                                 {(results[round.roundIndex] ?? []).map((song) => {
-                                  const blocked = song.recentDailyUseDayKey !== null;
+                                  const inReview = !song.isLocked;
+                                  const recentlyUsed = song.recentDailyUseDayKey !== null;
+                                  const blocked = inReview || recentlyUsed;
                                   return (
                                     <button
                                       key={song.puzzleId}
@@ -342,9 +347,11 @@ export function ChallengeModal({ challenge, onClose, onSaved }: Props) {
                                         if (!blocked) selectSong(round.roundIndex, song);
                                       }}
                                       title={
-                                        blocked
-                                          ? `Used in the daily rotation on ${formatShortDate(song.recentDailyUseDayKey!)} — repeats are blocked within 30 days`
-                                          : undefined
+                                        inReview
+                                          ? "Still in review — lock its hook start in the songs admin before scheduling it"
+                                          : recentlyUsed
+                                            ? `Used in the daily rotation on ${formatShortDate(song.recentDailyUseDayKey!)} — repeats are blocked within 30 days`
+                                            : undefined
                                       }
                                       className={`flex w-full items-center gap-3 px-3 py-2 text-left transition ${
                                         blocked
@@ -362,7 +369,12 @@ export function ChallengeModal({ challenge, onClose, onSaved }: Props) {
                                           {song.externalId ? " · YouTube" : ""}
                                         </p>
                                       </div>
-                                      {blocked && (
+                                      {inReview && (
+                                        <span className="shrink-0 rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-500">
+                                          In review
+                                        </span>
+                                      )}
+                                      {!inReview && recentlyUsed && (
                                         <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-500">
                                           Used {formatShortDate(song.recentDailyUseDayKey!)}
                                         </span>

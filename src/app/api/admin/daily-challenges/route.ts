@@ -118,10 +118,27 @@ export async function POST(request: Request): Promise<Response> {
     const puzzleIds = [...new Set(songs.map((s) => s.puzzleId))];
     const found = await prisma.puzzle.findMany({
       where: { id: { in: puzzleIds }, gameId: game.id },
-      select: { id: true },
+      select: { id: true, song: { select: { isLocked: true, title: true } } },
     });
     if (found.length < puzzleIds.length) {
       return jsonError(422, "validation_error", "One or more puzzleIds are invalid.");
+    }
+
+    // Same shape as the repeat-cooldown check below: the picker greys these out,
+    // but the picker can only stop a click. A challenge is a hand-built round
+    // list that bypasses samplePuzzle() entirely, so the review gate that lives
+    // in the sampler's WHERE clause has to be re-asserted here or an unreviewed
+    // hookStartMs reaches players through the one path that never samples.
+    const unlocked = found.filter((p) => !p.song?.isLocked);
+    if (unlocked.length > 0) {
+      return jsonError(
+        422,
+        "songs_in_review",
+        `${unlocked.length} song(s) are still in review. Lock them in the songs admin before scheduling a daily.`,
+        Object.fromEntries(
+          unlocked.map((p) => [p.id, [`"${p.song?.title ?? p.id}" is in review — not locked.`]]),
+        ),
+      );
     }
 
     // Mirrors the search endpoint's disabled-in-picker state: the picker can

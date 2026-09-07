@@ -28,12 +28,50 @@ type SortField = (typeof SORTABLE_FIELDS)[number];
 
 const PAGE_SIZE = 10;
 
+/// Status tabs on the admin songs list.
+///
+/// These are review-workflow states, not catalog states, and all three are
+/// mutually exclusive by construction:
+///
+///   locked     signed off — the only songs the sampler and the guess typeahead
+///              will touch (see Song.isLocked)
+///   in-review  in the catalog but not signed off — the work queue
+///   draft      puzzle.isBlocked — set aside, and therefore not in either of the
+///              above. PATCH /api/admin/songs/[puzzleId] unlocks on the way in,
+///              so undrafting always lands a song back in the review queue
+///              rather than silently returning it to rotation.
+///
+/// "missing-clip" used to be the fourth tab. It counted puzzles with no
+/// AUDIO_CLIP asset, which since stored clips were retired is every puzzle in
+/// the catalog — a stat card reading 658/658 that told an admin nothing. The
+/// review queue is what that slot is actually for.
+const STATUS_WHERE = {
+  locked: { song: { isLocked: true }, isBlocked: false },
+  "in-review": { song: { isLocked: false }, isBlocked: false },
+  draft: { isBlocked: true },
+} as const;
+
+type StatusKey = keyof typeof STATUS_WHERE;
+
+/// The draft tab was called "removed" before drafting was reversible. Kept as an
+/// alias so a bookmarked or linked ?status=removed still lands on the right tab
+/// instead of silently falling back to "all".
+const STATUS_ALIASES: Record<string, StatusKey | undefined> = { removed: "draft" };
+
 /**
- * GET /api/song?q=&status=active|removed|missing-clip&sort=title|artist|popularity&dir=asc|desc&page=1
+ * GET /api/song?q=&status=locked|in-review|draft&sort=title|artist|popularity&dir=asc|desc&page=1
  *
  * `counts` are catalog-wide (ignore q/status, used for the stat-card tabs);
  * `matchedCount`/`totalPages` describe the current q+status filter, which is
  * what the page/Previous/Next controls page through.
+ *
+ * Also returns `revealLadder`, the game's stage ladder in ms. The hook editor
+ * draws each rung over the waveform so an admin can see exactly which slice of
+ * audio a player gets at every attempt, and audition stage 1 on its own — which
+ * is the actual question being answered when placing a hook. Sent alongside the
+ * list rather than fetched separately because it is two columns off a row that
+ * changes approximately never, and a second round trip to open a drawer is a
+ * second round trip the reviewer waits through on every song.
  */
 export async function GET(request: Request): Promise<Response> {
   const admin = await getAdminUser();
@@ -41,7 +79,11 @@ export async function GET(request: Request): Promise<Response> {
 
   const url = new URL(request.url);
   const query = url.searchParams.get("q")?.trim() || "";
-  const status = url.searchParams.get("status") ?? "all";
+  const statusParam = url.searchParams.get("status") ?? "all";
+  const status: StatusKey | "all" =
+    statusParam in STATUS_WHERE
+      ? (statusParam as StatusKey)
+      : (STATUS_ALIASES[statusParam] ?? "all");
   const sortParam = url.searchParams.get("sort") ?? "title";
   const sort: SortField = (SORTABLE_FIELDS as readonly string[]).includes(sortParam)
     ? (sortParam as SortField)
@@ -50,14 +92,7 @@ export async function GET(request: Request): Promise<Response> {
   const pageParam = Number(url.searchParams.get("page") ?? "1");
   const page = Number.isInteger(pageParam) && pageParam > 0 ? pageParam : 1;
 
-  const statusWhere =
-    status === "active"
-      ? { isBlocked: false }
-      : status === "removed"
-        ? { isBlocked: true }
-        : status === "missing-clip"
-          ? { assets: { none: { kind: "AUDIO_CLIP" as const } } }
-          : undefined;
+  const statusWhere = status === "all" ? undefined : STATUS_WHERE[status];
 
   const where = {
     ...(query
@@ -71,7 +106,7 @@ export async function GET(request: Request): Promise<Response> {
     ...(statusWhere ? { puzzle: statusWhere } : {}),
   };
 
-  const [songs, matchedCount, totalCount, activeCount, removedCount, missingClipCount] =
+  const [songs, matchedCount, totalCount, lockedCount, inReviewCount, draftCount, game] =
     await Promise.all([
       prisma.song.findMany({
         where,
@@ -99,9 +134,13 @@ export async function GET(request: Request): Promise<Response> {
       }),
       prisma.song.count({ where }),
       prisma.song.count(),
-      prisma.puzzle.count({ where: { isBlocked: false } }),
-      prisma.puzzle.count({ where: { isBlocked: true } }),
-      prisma.puzzle.count({ where: { assets: { none: { kind: "AUDIO_CLIP" } } } }),
+      prisma.puzzle.count({ where: STATUS_WHERE.locked }),
+      prisma.puzzle.count({ where: STATUS_WHERE["in-review"] }),
+      prisma.puzzle.count({ where: STATUS_WHERE.draft }),
+      prisma.game.findUnique({
+        where: { slug: "songless" },
+        select: { revealLadder: true },
+      }),
     ]);
 
   return jsonOk({
@@ -110,20 +149,30 @@ export async function GET(request: Request): Promise<Response> {
       title: song.title,
       artist: song.artist,
       album: song.album,
+      movie: song.movie,
       popularity: song.puzzle.popularity,
       isActive: song.puzzle.isActive,
       isBlocked: song.puzzle.isBlocked,
       externalId: song.externalId,
       hookStartMs: song.hookStartMs ?? 0,
       hookStartAutoDetected: song.hookStartAutoDetected ?? false,
+      isLocked: song.isLocked,
+      lockedAt: song.lockedAt ? song.lockedAt.toISOString() : null,
       createdAt: song.createdAt ? song.createdAt.toISOString() : null,
     })),
     counts: {
       total: totalCount,
-      active: activeCount,
-      removed: removedCount,
-      missingClip: missingClipCount,
+      locked: lockedCount,
+      inReview: inReviewCount,
+      draft: draftCount,
     },
+    // Game.revealLadder is Json in the schema, so it arrives untyped. Falling
+    // back to [] rather than a hardcoded ladder: an empty rung list renders as
+    // "no stage markers", where a made-up one would draw markers in the wrong
+    // places and look authoritative.
+    revealLadder: Array.isArray(game?.revealLadder)
+      ? (game.revealLadder as unknown[]).filter((n): n is number => typeof n === "number")
+      : [],
     page,
     pageSize: PAGE_SIZE,
     matchedCount,

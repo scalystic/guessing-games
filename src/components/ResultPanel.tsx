@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { RoundStatus, RoundHistoryEntry, AchievementEntry } from "@/hooks/useMelodleGame";
 import type { Reveal } from "@/lib/api/runs";
 import { fetchAlbumArtUrl } from "@/lib/album-art";
+import { Confetti } from "@/components/Confetti";
 
 type Props = {
   reveal: Reveal;
@@ -132,7 +133,16 @@ export function ResultPanel({
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-(--scrim) p-4" role="dialog" aria-modal="true" aria-labelledby="result-title">
-      <div className="panel-in w-full max-w-md overflow-hidden rounded-[14px] border border-(--hairline) bg-(--surface-strong) shadow-2xl">
+      <div
+        className={`w-full max-w-md overflow-hidden rounded-[14px] border bg-(--surface-strong) shadow-2xl ${
+          won ? "panel-in" : "miss-shake"
+        }`}
+        style={{
+          borderColor: won
+            ? "color-mix(in srgb, var(--success) 45%, var(--hairline))"
+            : "color-mix(in srgb, var(--miss) 45%, var(--hairline))",
+        }}
+      >
         <div className="grid gap-6 p-5 sm:grid-cols-[132px_1fr] sm:p-6">
           <div className="mx-auto flex flex-col items-center sm:mx-0">
             <button
@@ -217,10 +227,17 @@ export function ResultPanel({
                     </svg>
                   )}
                 </span>
-                {won ? "Correct Guess!" : "Tune Missed"}
+                {won
+                  ? attemptsUsed <= 1
+                    ? "Nailed it — first try!"
+                    : `Correct on attempt ${attemptsUsed}`
+                  : "Not this time"}
               </span>
             </div>
-            <h2 id="result-title" className="mt-2 text-balance font-[family-name:var(--font-display)] text-3xl font-semibold leading-[0.95] tracking-[-0.02em] text-(--text)">
+            <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-(--text-faint)">
+              {won ? "You guessed" : "The track was"}
+            </p>
+            <h2 id="result-title" className="mt-1 text-balance font-[family-name:var(--font-display)] text-3xl font-semibold leading-[0.95] tracking-[-0.02em] text-(--text)">
               {reveal.title}
             </h2>
             <p className="mt-2 font-[family-name:var(--font-display)] text-xs leading-4 text-(--text-dim)">
@@ -304,6 +321,10 @@ export function ResultPanel({
           </button>
         </div>
       </div>
+
+      {/* After the card, so the pieces fall in FRONT of it. The panel root is
+          fixed, so `absolute inset-0` inside Confetti spans the viewport. */}
+      {won ? <Confetti accent="var(--signal)" /> : null}
     </div>
   );
 }

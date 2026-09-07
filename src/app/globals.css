@@ -148,6 +148,64 @@ a {
   100% { transform: scale(1.35); opacity: 0; }
 }
 
+/* Confetti, for a solved round. Each piece carries its own --drift (how far it
+   sails sideways) and --tilt (its starting angle) so 40-odd spans on one
+   keyframe don't fall in lockstep. */
+@keyframes confetti-fall {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -5vh, 0) rotate(var(--tilt, 0deg));
+  }
+  8% { opacity: 1; }
+  85% { opacity: 1; }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--drift, 0px), 105vh, 0) rotate(calc(var(--tilt, 0deg) + 540deg));
+  }
+}
+.confetti-fall {
+  animation-name: confetti-fall;
+  animation-timing-function: cubic-bezier(0.25, 0.55, 0.55, 1);
+  animation-fill-mode: forwards;
+}
+
+/* A missed guess: the flash drops in and shudders, because a slot in the
+   attempts row quietly flipping to MISS is easy to miss entirely. */
+@keyframes miss-flash-in {
+  0% { opacity: 0; transform: translate3d(0, -12px, 0) scale(0.96); }
+  40% { opacity: 1; transform: translate3d(-6px, 0, 0) scale(1); }
+  55% { transform: translate3d(6px, 0, 0); }
+  70% { transform: translate3d(-4px, 0, 0); }
+  85% { transform: translate3d(2px, 0, 0); }
+  100% { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes miss-flash-out {
+  to { opacity: 0; transform: translate3d(0, -8px, 0); }
+}
+
+.miss-flash {
+  /* `forwards`, not `both`, on the exit: `both` would apply its start frame
+     during the delay and cancel the entrance. */
+  animation:
+    miss-flash-in 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+    miss-flash-out 0.35s ease-in 2.2s forwards;
+}
+
+/* Same shudder for the result panel when the round is lost, so the win and the
+   loss don't arrive as the same silent card with different words on it. */
+@keyframes miss-shake {
+  0% { transform: translate3d(0, 10px, 0) scale(0.98); opacity: 0; }
+  35% { transform: translate3d(-7px, 0, 0) scale(1); opacity: 1; }
+  50% { transform: translate3d(7px, 0, 0); }
+  65% { transform: translate3d(-5px, 0, 0); }
+  80% { transform: translate3d(3px, 0, 0); }
+  100% { transform: translate3d(0, 0, 0); opacity: 1; }
+}
+.miss-shake {
+  animation: miss-shake 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

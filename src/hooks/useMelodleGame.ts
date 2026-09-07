@@ -67,6 +67,24 @@ export type RoundHistoryEntry = {
   at: number;
 };
 
+/// A wrong guess on a round that is still open.
+///
+/// The attempts row flipping a slot to MISS is the only thing that used to mark
+/// one, which is easy to look straight past — especially since the typeahead
+/// clears itself at the same moment, so the screen's most visible change is the
+/// answer disappearing. This is what the UI announces instead.
+export type MissFeedback = {
+  /// Monotonic, so two identical misses in a row still retrigger the animation
+  /// rather than being deduplicated into one by React.
+  id: number;
+  /// What the player named. Never null — a skip is not a miss.
+  guessed: { title: string; artist: string };
+  attemptsRemaining: number;
+  /// The clip window the miss just opened up, in ms. Null when the ladder had
+  /// nothing further to unlock.
+  unlockedMs: number | null;
+};
+
 export type GameConfig = {
   gameSlug: string;
   revealLadder: number[];
@@ -101,6 +119,8 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
   const [hint, setHint] = useState<RoundHint | null>(null);
   const [reveal, setReveal] = useState<Reveal | null>(null);
   const [lastPoints, setLastPoints] = useState<number | null>(null);
+  const [miss, setMiss] = useState<MissFeedback | null>(null);
+  const missIdRef = useRef(0);
 
   // Run totals — all server-owned.
   const [lives, setLives] = useState(0);
@@ -274,6 +294,7 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
     setHint(null);
     setReveal(null);
     setLastPoints(null);
+    setMiss(null);
     setAttemptsUsed(0);
     setStage(1);
     releaseRevealAudio();
@@ -439,6 +460,10 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
       const spent = attemptsUsed;
       setGuesses((previous) => [...previous, { ...record, pending: true }]);
       setAttemptsUsed(spent + 1);
+      // The previous miss belongs to the previous attempt — clear it as soon as
+      // the next one is submitted rather than leaving it to time out over the
+      // answer that replaced it.
+      setMiss(null);
 
       return () => {
         setGuesses((previous) => previous.filter((entry) => !entry.pending));
@@ -464,6 +489,18 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
       });
 
       if (result.outcome === "PENDING") {
+        // A named guess that left the round open is a miss, and the only one the
+        // player needs told: a skip was their own doing, and a resolved round
+        // gets the result panel.
+        if (record.song && !record.skipped) {
+          setMiss({
+            id: ++missIdRef.current,
+            guessed: record.song,
+            attemptsRemaining: Math.max(0, maxAttempts - result.attemptsUsed),
+            unlockedMs: revealLadder[result.stageReached - 1] ?? null,
+          });
+        }
+
         // YouTube rounds stream directly — no bytes to fetch.
         if (result.nextAudio) playInlineAudio(result.nextAudio, generation);
         else if (!result.youtubeVideoId) await loadAudio(id, generation);
@@ -473,7 +510,7 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
       // Best-effort reveal audio for stored songs only.
       if (!result.youtubeVideoId) await loadRevealAudio(id, generation);
     },
-    [applyResult, playInlineAudio, loadAudio, loadRevealAudio],
+    [applyResult, playInlineAudio, loadAudio, loadRevealAudio, maxAttempts, revealLadder],
   );
 
   const guess = useCallback(
@@ -670,6 +707,8 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
     hint,
     reveal,
     lastPoints,
+    miss,
+    dismissMiss: useCallback(() => setMiss(null), []),
 
     lives,
     streak,

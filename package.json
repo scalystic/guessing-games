@@ -30,6 +30,11 @@
     "db:validate": "prisma validate",
     "db:format": "prisma format",
     "metadata": "tsx scripts/fetch-metadata.ts",
+    "clean:catalog": "tsx scripts/clean-catalog.ts",
+    "enrich:catalog": "tsx scripts/enrich-catalog.ts",
+    "detect:covers": "tsx scripts/detect-covers.ts",
+    "fix:catalog": "tsx scripts/apply-corrections.ts",
+    "report:variants": "tsx scripts/report-variants.ts",
     "purge:catalog": "tsx scripts/purge-catalog.ts",
     "purge:storage": "tsx scripts/purge-storage.ts",
     "purge:players": "tsx scripts/purge-players.ts"

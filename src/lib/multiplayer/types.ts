@@ -76,10 +76,18 @@ export type ServerToClientEvents = {
   'room:error': (data: { message: string }) => void
   'player:credentials': (data: { runId: string; runToken: string }) => void
   'game:started': (data: { totalRounds: number; roundIndex: number }) => void
-  /// `deadline` is an ISO timestamp of when this round's 60s budget runs out
-  /// (the same clock the server enforces via ROUND_TIMEOUT_MS) — the client
-  /// renders a countdown from it rather than assuming a duration.
+  /// `deadline` is an ISO timestamp of when this round's budget runs out (the
+  /// same clock the server enforces via ROUND_TIMEOUT_MS) — the client renders
+  /// a countdown from it rather than assuming a duration. It is not a fixed
+  /// duration: see 'round:deadline'.
   'round:start': (data: { roundIndex: number; totalRounds: number; deadline: string }) => void
+  /// The round's deadline moved EARLIER while it was still open — today only
+  /// because the first player finished and the rest are now on the shorter
+  /// grace window (FIRST_FINISH_GRACE_MS on the server). Its own event rather
+  /// than a second `round:start` because a re-`round:start` resets the
+  /// per-player progress dots, wiping the "who's already done" markers that
+  /// are the whole point of the wait. Only ever shrinks the window.
+  'round:deadline': (data: { roundIndex: number; deadline: string; reason: 'grace' }) => void
   'round:progress': (data: { playerId: string; displayName: string; done: boolean; outcome: 'SOLVED' | 'FAILED' | null; points: number | null }) => void
   'round:results': (data: RoundResults) => void
   'game:end': (data: { rankings: FinalRanking[] }) => void

@@ -1,6 +1,10 @@
 import { SongsList, type SongsQuery, type SortKey, type StatusFilter } from "./songs-list";
 
-const STATUS_VALUES: StatusFilter[] = ["all", "active", "removed", "missing-clip"];
+const STATUS_VALUES: StatusFilter[] = ["all", "locked", "in-review", "draft"];
+
+/// ?status=removed is what the drafts tab was called before drafting became
+/// reversible; GET /api/song accepts the same alias.
+const STATUS_ALIASES: Record<string, StatusFilter | undefined> = { removed: "draft" };
 const SORT_VALUES: SortKey[] = ["title", "artist", "popularity", "newest"];
 
 /// This page only resolves the initial query from the URL and hands off to
@@ -20,7 +24,7 @@ export default async function SongsPage({
     q: typeof sp.q === "string" ? sp.q.trim() : "",
     status: STATUS_VALUES.includes(sp.status as StatusFilter)
       ? (sp.status as StatusFilter)
-      : "all",
+      : (STATUS_ALIASES[String(sp.status)] ?? "all"),
     sort: SORT_VALUES.includes(sp.sort as SortKey) ? (sp.sort as SortKey) : "newest",
     dir: sp.dir === "desc" ? "desc" : "asc",
     page: Number.isInteger(pageNum) && pageNum > 0 ? pageNum : 1,
@@ -30,10 +34,12 @@ export default async function SongsPage({
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="font-[family-name:var(--font-display)] text-2xl font-bold text-(--text)">
-          Manage Song
+          Manage songs
         </h1>
         <p className="mt-1 text-sm text-(--text-dim)">
-          Add, edit, and remove songs from the catalog.
+          Review each song&apos;s hook start by ear, then lock it. Only locked songs are played.
+          Don&apos;t want one in the list? Draft it — it leaves the queue and rotation, and can be
+          recovered back into review at any time.
         </p>
       </div>
 
