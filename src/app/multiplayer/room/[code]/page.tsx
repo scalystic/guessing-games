@@ -1,15 +1,14 @@
-import { headers } from 'next/headers'
-import { ensurePlayer } from '@/lib/guest'
+import { getExistingPlayerId } from '@/lib/guest'
 import { getCurrentUser } from '@/lib/get-current-user'
 import { RoomClient } from './room-client'
 
-async function clientIp(): Promise<string | null> {
-  const h = await headers()
-  return h.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null
-}
-
+/// Identity is *read* here, never minted: this page is the one a first-time
+/// visitor reaches by invite link with no session cookie yet, and minting one
+/// during render throws ("Cookies can only be modified in a Server Action or
+/// Route Handler"). A null playerId is therefore normal — the client posts the
+/// room's join route, which mints the guest and seats them. See room-client.tsx.
 export default async function RoomPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = await params
-  const [{ playerId }, user] = await Promise.all([ensurePlayer(await clientIp()), getCurrentUser()])
+  const [playerId, user] = await Promise.all([getExistingPlayerId(), getCurrentUser()])
   return <RoomClient code={code.toUpperCase()} playerId={playerId} user={user} />
 }
