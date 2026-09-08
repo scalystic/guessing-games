@@ -58,6 +58,8 @@ type Props = {
   onPlayRequested?: () => void;
   promptTitle?: string;
   promptSubtitle?: string;
+  /// Bump to start the clip without a click. See the effect that consumes it.
+  autoPlayToken?: number;
 };
 
 const BAR_COUNT = 32;
@@ -142,6 +144,7 @@ export function PlayerBar({
   onPlayRequested,
   promptTitle,
   promptSubtitle,
+  autoPlayToken = 0,
 }: Props) {
   // Stored-audio refs
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -775,6 +778,38 @@ export function PlayerBar({
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [youtubeVideoId, hookStartMs]);
+
+  /// Start the clip on the parent's say-so, no click.
+  ///
+  /// A skip's entire purpose is the longer window it buys, so ending it with the
+  /// deck sitting on "Ready" makes the player press play for the thing they just
+  /// asked for. The parent bumps the token once the new stage has been committed
+  /// to state, which is why this reads `revealMs` correctly: the bump is batched
+  /// with the stage change, so by the time this effect runs the window on screen
+  /// is already the one that was just unlocked.
+  ///
+  /// A COUNTER, not a boolean: two skips in a row are two distinct requests and
+  /// each has to fire, and the initial value can then be ignored so mounting the
+  /// deck never plays anything by itself.
+  ///
+  /// Declared last on purpose. The round-change reset and the stored-audio
+  /// teardown above both call stopPlayback/stopYoutubePlayback in the same
+  /// commit; starting playback before them would have it torn straight back down.
+  const autoPlayTokenRef = useRef(autoPlayToken);
+  useEffect(() => {
+    if (autoPlayToken === autoPlayTokenRef.current) return;
+    autoPlayTokenRef.current = autoPlayToken;
+
+    // `onPlayRequested` means the button isn't a play button at all (the era
+    // picker borrows the deck), and `loading` means there is nothing to play yet.
+    if (onPlayRequested || loading) return;
+
+    if (youtubeVideoId) handleYoutubePlay();
+    else if (audioUrl) handlePlay();
+  // Only the token drives this. Listing audioUrl/revealMs would restart the clip
+  // in the middle of a listen every time the stage moved.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPlayToken]);
 
   const [lastUrl, setLastUrl] = useState(audioUrl);
   if (lastUrl !== audioUrl) {

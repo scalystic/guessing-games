@@ -141,6 +141,10 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioLoading, setAudioLoading] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+  /// Bumped when the player has earned a clip they asked for outright — i.e. a
+  /// skip — so the deck can start it instead of waiting for a second click. See
+  /// PlayerBar's autoPlayToken.
+  const [autoPlayToken, setAutoPlayToken] = useState(0);
 
   // YouTube streaming state for the current round.
   const [youtubeVideoId, setYoutubeVideoId] = useState<string | null>(null);
@@ -504,6 +508,15 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
         // YouTube rounds stream directly — no bytes to fetch.
         if (result.nextAudio) playInlineAudio(result.nextAudio, generation);
         else if (!result.youtubeVideoId) await loadAudio(id, generation);
+
+        // Skipping IS the request for the next clip — the player spent an
+        // attempt on nothing else. Play it for them rather than leaving the
+        // longer window sitting behind a play button. A miss is not treated the
+        // same: they were listening for an answer, not for more tape, and
+        // starting audio under the miss flash talks over it.
+        if (record.skipped && generation === generationRef.current) {
+          setAutoPlayToken((token) => token + 1);
+        }
         return;
       }
 
@@ -730,6 +743,7 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
     revealAudioLoading,
     youtubeVideoId,
     hookStartMs,
+    autoPlayToken,
     pending: pendingAction !== null,
     pendingAction,
 

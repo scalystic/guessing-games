@@ -96,6 +96,9 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
   const [currentStreak, setCurrentStreak] = useState(0);
   const [hint, setHint] = useState<RoundHint | null>(null);
   const [nextRoundSecondsLeft, setNextRoundSecondsLeft] = useState(0);
+  /// Bumped after a skip so the deck starts the window that skip just unlocked
+  /// rather than making the player press play for it. See PlayerBar.
+  const [autoPlayToken, setAutoPlayToken] = useState(0);
 
   const generationRef = useRef(0);
   /// The round this screen has already loaded. Null until the first load, so a
@@ -241,6 +244,10 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
     const res = await callRun("skip", myRun.runId, myRun.runToken, { idempotencyKey: newIdempotencyKey() });
     setGuesses((prev) => [...prev, { song: null, puzzleId: null, correct: false, skipped: true, at: Date.now() }]);
     await applyResult(res, roundIndex);
+    // The skip bought a longer window and nothing else — start it. Only while
+    // the round is still open: on SOLVED/FAILED the room moves to the reveal,
+    // and playing the clip over that is noise.
+    if (res?.outcome === "PENDING") setAutoPlayToken((token) => token + 1);
     setPendingAction(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myRun, roundDone, pendingAction, room]);
@@ -457,6 +464,7 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
                 ladder={revealLadder}
                 loading={roundLoading}
                 waveformSeed={`${myRun?.runId ?? "run"}:${room?.currentRound ?? 1}`}
+                autoPlayToken={autoPlayToken}
                 promptSubtitle="Everyone in the room hears the same clip."
               />
               {lastPoints !== null && (

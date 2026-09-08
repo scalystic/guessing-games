@@ -565,6 +565,7 @@ export default function Sargam({ user, game: config }: { user: CurrentUser; game
             ladder={game.revealLadder}
             loading={game.audioLoading || game.phase === "starting"}
             waveformSeed={`${game.runId ?? "run"}:${game.roundIndex}`}
+            autoPlayToken={game.autoPlayToken}
             onPlayRequested={awaitingTape ? () => setShowEraDialog(true) : undefined}
             promptTitle={awaitingTape ? "Load a tape to begin" : undefined}
             promptSubtitle={awaitingTape ? "Pick an era and the round starts." : undefined}

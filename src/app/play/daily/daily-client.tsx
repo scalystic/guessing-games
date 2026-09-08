@@ -377,6 +377,7 @@ function DailyGame({
             ladder={game.revealLadder}
             loading={game.audioLoading || game.phase === "starting"}
             waveformSeed={`${game.runId ?? "run"}:${game.roundIndex}`}
+            autoPlayToken={game.autoPlayToken}
           />
 
           <div className="mt-5">
