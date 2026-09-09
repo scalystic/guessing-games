@@ -185,7 +185,7 @@ export function GuessAutocomplete({
       <label
         id="your-guess-label"
         htmlFor="song-guess"
-        className="mb-2 block font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-(--text-faint)"
+        className="sr-only font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-(--text-faint) sm:not-sr-only sm:mb-2 sm:block"
       >
         Your guess
       </label>
@@ -254,24 +254,28 @@ export function GuessAutocomplete({
             </ul>
           )}
         </div>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={onSkip}
-          className="flex min-h-12 shrink-0 items-center justify-center gap-1.5 rounded-[7px] bg-(--signal) px-5 text-sm font-bold text-(--signal-ink) transition-colors duration-200 enabled:hover:bg-[#ffd071] disabled:cursor-wait disabled:opacity-50"
-        >
-          {pendingAction === "skip" ? "Unlocking…" : "Skip"}
-        </button>
-        {onGiveUp && (
+        {/* One row on a phone rather than two stacked full-width buttons —
+            that stack cost ~56px of the fold for two short labels. */}
+        <div className="flex gap-2">
           <button
             type="button"
             disabled={disabled}
-            onClick={onGiveUp}
-            className="flex min-h-12 shrink-0 items-center justify-center gap-1.5 rounded-[7px] border border-(--hairline) bg-(--surface) px-4 text-sm font-semibold text-(--text-dim) transition-all duration-200 enabled:hover:border-red-500/30 enabled:hover:bg-red-500/10 enabled:hover:text-red-400 disabled:cursor-wait disabled:opacity-50"
+            onClick={onSkip}
+            className="flex min-h-12 flex-1 items-center justify-center gap-1.5 rounded-[7px] bg-(--signal) px-5 text-sm font-bold text-(--signal-ink) transition-colors duration-200 enabled:hover:bg-[#ffd071] disabled:cursor-wait disabled:opacity-50 sm:flex-none sm:shrink-0"
           >
-            {pendingAction === "giveup" ? "Revealing…" : "Give Up"}
+            {pendingAction === "skip" ? "Unlocking…" : "Skip"}
           </button>
-        )}
+          {onGiveUp && (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={onGiveUp}
+              className="flex min-h-12 flex-1 items-center justify-center gap-1.5 rounded-[7px] border border-(--hairline) bg-(--surface) px-4 text-sm font-semibold text-(--text-dim) transition-all duration-200 enabled:hover:border-red-500/30 enabled:hover:bg-red-500/10 enabled:hover:text-red-400 disabled:cursor-wait disabled:opacity-50 sm:flex-none sm:shrink-0"
+            >
+              {pendingAction === "giveup" ? "Revealing…" : "Give Up"}
+            </button>
+          )}
+        </div>
       </div>
       <p className="mt-2 min-h-4 text-xs text-(--text-faint)" role="status" aria-live="polite">
         {pendingCopy ?? (active ? "Choose a catalog match before submitting." : "Type at least two characters.")}

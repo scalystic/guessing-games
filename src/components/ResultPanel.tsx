@@ -6,6 +6,7 @@ import type { Reveal } from "@/lib/api/runs";
 import { fetchAlbumArtUrl } from "@/lib/album-art";
 import { Confetti } from "@/components/Confetti";
 import { songSubtitleWithYear, songTitle } from "@/lib/song-label";
+import { loadYouTubeAPI, YT_ENDED, YT_PLAYING, type YTPlayerInstance } from "@/lib/youtube";
 
 type Props = {
   reveal: Reveal;
@@ -18,6 +19,10 @@ type Props = {
   streak: number;
   score: number;
   fullAudioUrl: string | null;
+  /// The round's YouTube video, when it streamed from YouTube rather than from a
+  /// stored clip — which, since the server retired stored clips, is every round.
+  /// Without it the play button below has nothing to play and sits disabled.
+  youtubeVideoId?: string | null;
   audioLoading: boolean;
   onNext: () => void;
   nextLabel?: string;
@@ -37,6 +42,12 @@ function formatDuration(ms: number) {
   return `${seconds < 1 ? seconds.toFixed(1) : Number.isInteger(seconds) ? seconds : seconds.toFixed(1)} seconds`;
 }
 
+/// How long to wait for a play() to actually produce audio before handing the
+/// button back. Reaching this means the video never started — embed disabled,
+/// region block, a dead network — and the disc would otherwise spin over silence
+/// with no way back to "play". Same reasoning, and same budget, as PlayerBar's.
+const YT_START_TIMEOUT_MS = 8_000;
+
 export function ResultPanel({
   reveal,
   status,
@@ -48,6 +59,7 @@ export function ResultPanel({
   streak,
   score,
   fullAudioUrl,
+  youtubeVideoId,
   audioLoading,
   onNext,
   nextLabel = "Next track",
@@ -62,8 +74,24 @@ export function ResultPanel({
 }: Props) {
   const [copied, setCopied] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  /// Play has been pressed but no audio has reached the speakers yet. A cold
+  /// embed takes a moment to load, and a disc that spins in silence reads as a
+  /// dead button — the same lie PlayerBar's "Cueing" readout exists to avoid.
+  const [cueing, setCueing] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const won = status === "SOLVED";
+
+  const ytContainerRef = useRef<HTMLDivElement | null>(null);
+  const ytPlayerRef = useRef<YTPlayerInstance | null>(null);
+  const ytReadyRef = useRef(false);
+  /// Play was pressed before the player finished initializing — onReady starts
+  /// the track rather than dropping the click on the floor.
+  const ytPendingPlayRef = useRef(false);
+  /// The video has been handed to loadVideoById, i.e. this player has actually
+  /// started it rather than merely been constructed around it. Replays then use
+  /// seek + play, which keeps the buffer instead of paying for a second load.
+  const ytLoadedRef = useRef(false);
+  const ytWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Safe to show the real cover here — the title/artist/album are already
   // revealed in plain text below, unlike the live PlayerBar deck.
@@ -106,7 +134,147 @@ export function ResultPanel({
     };
   }, [fullAudioUrl]);
 
+  /// Stand up a player for the revealed track.
+  ///
+  /// Deliberately its own player rather than PlayerBar's: that one is metered to
+  /// the stage window and is mid-round bookkeeping for the NEXT track by the time
+  /// this panel is up. This one has one job — play the song, whole, from the top.
+  const ytVideoIdRef = useRef<string | null>(youtubeVideoId ?? null);
+  useEffect(() => { ytVideoIdRef.current = youtubeVideoId ?? null; }, [youtubeVideoId]);
+
+  useEffect(() => {
+    if (!youtubeVideoId) return;
+
+    let cancelled = false;
+    loadYouTubeAPI(() => {
+      if (cancelled || ytPlayerRef.current || !ytContainerRef.current || !window.YT) return;
+
+      ytPlayerRef.current = new window.YT.Player(ytContainerRef.current, {
+        videoId: youtubeVideoId,
+        playerVars: {
+          autoplay: 0,
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
+          modestbranding: 1,
+          rel: 0,
+          iv_load_policy: 3,
+          playsinline: 1,
+        },
+        events: {
+          onReady: () => {
+            ytReadyRef.current = true;
+            // The panel appears and the player is clicked within the same second
+            // or two, so the click regularly beats the embed's own load. Honour
+            // it here rather than making them press play twice.
+            if (ytPendingPlayRef.current) startYoutubeTrack();
+          },
+          onStateChange: (event) => {
+            if (event.data === YT_PLAYING) {
+              clearYoutubeWatchdog();
+              setCueing(false);
+              setIsPlaying(true);
+              return;
+            }
+            if (event.data === YT_ENDED) {
+              ytPendingPlayRef.current = false;
+              clearYoutubeWatchdog();
+              setCueing(false);
+              setIsPlaying(false);
+            }
+          },
+        },
+      });
+    });
+
+    return () => { cancelled = true; };
+  // startYoutubeTrack is redefined every render and would rebuild the player on
+  // each one; it reads its inputs from refs so capturing the first copy is safe.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [youtubeVideoId]);
+
+  // Tear the player down with the panel — the answer screen closing is the end
+  // of the track, and a destroyed player is the only thing that stops an embed.
+  useEffect(() => {
+    return () => {
+      if (ytWatchdogRef.current) clearTimeout(ytWatchdogRef.current);
+      if (ytPlayerRef.current) {
+        try { ytPlayerRef.current.destroy(); } catch { /* already gone */ }
+        ytPlayerRef.current = null;
+      }
+    };
+  }, []);
+
+  function clearYoutubeWatchdog() {
+    if (ytWatchdogRef.current) clearTimeout(ytWatchdogRef.current);
+    ytWatchdogRef.current = null;
+  }
+
+  /// Give up on a play that never produced audio, so the button goes back to
+  /// being a play button instead of a stop button over silence.
+  function armYoutubeWatchdog() {
+    clearYoutubeWatchdog();
+    ytWatchdogRef.current = setTimeout(() => {
+      ytWatchdogRef.current = null;
+      if (!ytPendingPlayRef.current) return;
+      ytPendingPlayRef.current = false;
+      try { ytPlayerRef.current?.pauseVideo(); } catch { /* unusable player */ }
+      setCueing(false);
+      setIsPlaying(false);
+    }, YT_START_TIMEOUT_MS);
+  }
+
+  /// From the top, not from the hook: the clip is what they already heard, and
+  /// this button offers the song.
+  function startYoutubeTrack() {
+    const player = ytPlayerRef.current;
+    const videoId = ytVideoIdRef.current;
+    if (!player || !ytReadyRef.current || !videoId) return;
+
+    try {
+      // PlayerBar primes its embed muted; this one may be looking at that same
+      // player's leftovers on a shared API object, so never assume unmuted.
+      player.unMute();
+      if (ytLoadedRef.current) {
+        player.seekTo(0, true);
+        player.playVideo();
+      } else {
+        // loadVideoById is the API's load-and-play primitive. A player that has
+        // only ever been constructed routinely swallows seekTo + playVideo — the
+        // seek re-cues the video and the play lands on a player busy loading —
+        // which is exactly the "first click does nothing" failure PlayerBar
+        // documents at length.
+        ytLoadedRef.current = true;
+        player.loadVideoById({ videoId, startSeconds: 0 });
+      }
+    } catch {
+      // Player object exists but isn't usable — the watchdog hands the button back.
+    }
+    armYoutubeWatchdog();
+  }
+
+  function stopYoutubeTrack() {
+    ytPendingPlayRef.current = false;
+    clearYoutubeWatchdog();
+    try { ytPlayerRef.current?.pauseVideo(); } catch { /* already gone */ }
+    setCueing(false);
+    setIsPlaying(false);
+  }
+
   function togglePlayback() {
+    if (youtubeVideoId) {
+      if (isPlaying || cueing) {
+        stopYoutubeTrack();
+        return;
+      }
+      ytPendingPlayRef.current = true;
+      setCueing(true);
+      // Not ready yet: onReady above picks the click up.
+      if (ytReadyRef.current) startYoutubeTrack();
+      else armYoutubeWatchdog();
+      return;
+    }
+
     const audio = audioRef.current;
     if (!audio) return;
 
@@ -146,21 +314,30 @@ export function ResultPanel({
       >
         <div className="grid gap-6 p-5 sm:grid-cols-[132px_1fr] sm:p-6">
           <div className="mx-auto flex flex-col items-center sm:mx-0">
+            {/* Hidden YouTube iframe — must be in the DOM for the IFrame API to attach */}
+            {youtubeVideoId ? (
+              <div
+                aria-hidden="true"
+                style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", opacity: 0, pointerEvents: "none" }}
+              >
+                <div ref={ytContainerRef} />
+              </div>
+            ) : null}
             <button
               type="button"
               onClick={togglePlayback}
-              disabled={audioLoading || !fullAudioUrl}
+              disabled={audioLoading || (!fullAudioUrl && !youtubeVideoId)}
               className={`relative flex h-32 w-32 items-center justify-center rounded-full bg-cover bg-center text-[#151925] shadow-lg transition-opacity duration-200 disabled:cursor-wait disabled:opacity-65 ${
                 coverUrl
                   ? ""
                   : "border-[10px] border-[#111520] bg-[repeating-radial-gradient(circle,#2e3444_0_2px,#121620_3px_6px)]"
               }`}
               style={coverUrl ? { backgroundImage: `url(${coverUrl})` } : undefined}
-              aria-label={isPlaying ? "Stop the full song" : "Play the full song"}
+              aria-label={isPlaying || cueing ? "Stop the full song" : "Play the full song"}
             >
               {coverUrl && <span className="absolute inset-0 rounded-full bg-black/35" aria-hidden="true" />}
               <span className="relative z-10 flex h-12 w-12 items-center justify-center rounded-full bg-(--signal) text-(--signal-ink)">
-                {audioLoading ? (
+                {audioLoading || cueing ? (
                   <svg width="18" height="18" viewBox="0 0 20 20" className="animate-spin" fill="none" aria-hidden="true">
                     <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="2.5" strokeOpacity="0.3" />
                     <path d="M17 10a7 7 0 0 0-7-7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
@@ -178,7 +355,13 @@ export function ResultPanel({
               </span>
             </button>
             <p className="mt-2 font-mono text-[9px] uppercase tracking-[0.16em] text-(--text-faint)">
-              {audioLoading ? "Loading full track" : "Play full track"}
+              {audioLoading
+                ? "Loading full track"
+                : cueing
+                  ? "Cueing full track"
+                  : isPlaying
+                    ? "Stop full track"
+                    : "Play full track"}
             </p>
           </div>
 

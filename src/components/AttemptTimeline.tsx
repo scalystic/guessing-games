@@ -12,8 +12,13 @@ type Props = {
 export function AttemptTimeline({ guesses, currentAttempt, maxAttempts }: Props) {
   return (
     <section aria-labelledby="attempts-label">
-      <div className="mb-2 flex items-center justify-between">
-        <p id="attempts-label" className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-(--text-faint)">
+      <p id="attempts-label" className="sr-only">
+        Attempts
+      </p>
+      {/* Caption row is desktop-only: on a phone the numbered slots already
+          say how many are left, and the row cost 23px of the fold. */}
+      <div className="mb-2 hidden items-center justify-between sm:flex">
+        <p aria-hidden="true" className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-(--text-faint)">
           Attempts
         </p>
         <p className="text-xs text-(--text-dim)">
@@ -67,7 +72,7 @@ export function AttemptTimeline({ guesses, currentAttempt, maxAttempts }: Props)
           return (
             <li
               key={i}
-              className="flex h-9 items-center justify-center rounded-[4px] border font-mono text-[10px] font-semibold transition-colors duration-200 sm:text-xs"
+              className="flex h-9 items-center justify-center rounded-[4px] border font-mono text-[10px] font-semibold transition-colors duration-200 [@media(max-height:820px)]:h-8 sm:text-xs"
               style={{ borderColor: border, color, background }}
               aria-label={label}
               aria-current={isCurrent ? "step" : undefined}

@@ -10,33 +10,20 @@ import { AttemptTimeline } from "@/components/AttemptTimeline";
 import { GuessAutocomplete } from "@/components/GuessAutocomplete";
 import { MissFlash } from "@/components/MissFlash";
 import { ResultPanel } from "@/components/ResultPanel";
-import { ProfileMenu } from "@/components/ProfileMenu";
+import { GameHeader } from "@/components/GameHeader";
+import { GameMenu } from "@/components/GameMenu";
+import { StreakPill } from "@/components/StreakPill";
 import { Modal } from "@/components/Modal";
 import { HowToPlayList } from "@/components/HowToPlayList";
 import { Leaderboard } from "@/components/Leaderboard";
 import { DailyStreakStrip } from "@/components/DailyStreakStrip";
+import { DailyCalendarModal } from "@/components/DailyCalendarModal";
+import { useDailyHistory } from "@/hooks/useDailyHistory";
 import { RunErrorDialog } from "@/components/RunErrorDialog";
 
 function formatSeconds(milliseconds: number) {
   const seconds = milliseconds / 1000;
   return seconds < 1 ? seconds.toFixed(1) : Number.isInteger(seconds) ? seconds : seconds.toFixed(1);
-}
-
-function HelpIcon() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-      <circle cx="10" cy="10" r="7.5" />
-      <path d="M7.9 7.6a2.2 2.2 0 0 1 4.3.7c0 1.8-2.2 1.9-2.2 3.4M10 14.7h.01" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function BackIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M13 16l-6-6 6-6" />
-    </svg>
-  );
 }
 
 type ChallengeInfo = {
@@ -76,59 +63,53 @@ function PageShell({
   onHelpClose: () => void;
   children: React.ReactNode;
 }) {
+  const history = useDailyHistory(gameSlug);
+  const [showCalendar, setShowCalendar] = useState(false);
+
   // min-h-full, not min-h-screen — same reason as the Sargam shell: the root
   // layout renders a footer below <main>, so pinning this to the viewport
   // height would put a scrollbar on every daily-challenge screen.
   return (
     <div className="page-backdrop min-h-full text-(--text)">
-      <div className="mx-auto flex w-full max-w-[760px] flex-col px-4 pb-12 pt-5 sm:px-6 sm:pb-16 sm:pt-8">
-        <header className="flex items-center justify-between gap-4 border-b border-(--hairline) pb-5">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2.5">
-              <span className="h-7 w-1.5 bg-(--signal)" aria-hidden="true" />
-              <div>
-                <p className="font-[family-name:var(--font-display)] text-3xl font-semibold leading-none tracking-[0.04em] text-(--text)">
-                  SARGAM
-                </p>
-                <p className="mt-0.5 font-mono text-[9px] uppercase tracking-[0.18em] text-violet-400">
-                  Daily Challenge
-                </p>
-              </div>
-            </div>
-          </div>
-          <nav className="flex shrink-0 items-center gap-2" aria-label="Game controls">
-            <Link
-              href="/"
-              className="flex h-10 items-center gap-2 rounded-full border border-(--hairline) bg-(--surface) px-3 text-sm font-semibold text-(--text-dim) transition-colors hover:bg-(--surface-hover) hover:text-(--text)"
-              aria-label="Back to home"
-            >
-              <BackIcon />
-              <span className="hidden sm:inline">Home</span>
-            </Link>
-            <button
-              type="button"
-              onClick={onHelp}
-              className="flex h-10 items-center gap-2 rounded-full border border-(--hairline) bg-(--surface) px-3 text-sm font-semibold text-(--text-dim) transition-colors hover:bg-(--surface-hover) hover:text-(--text)"
-              aria-label="How to play"
-            >
-              <HelpIcon />
-              <span className="hidden sm:inline">How to play</span>
-            </button>
-            <ProfileMenu user={user} />
-          </nav>
-        </header>
-
-        <div className="border-b border-(--hairline) py-5">
-          <DailyStreakStrip gameSlug={gameSlug} />
-        </div>
+      <div className="mx-auto flex w-full max-w-[760px] flex-col px-4 pb-12 pt-3.5 [@media(max-height:820px)]:pt-2 sm:px-6 sm:pb-16 sm:pt-5">
+        <GameHeader subtitle="Daily challenge" accentSubtitle>
+          <StreakPill
+            current={history.streak}
+            ariaLabel={`Daily streak: ${history.streak ?? 0} days. Open calendar.`}
+            onClick={() => setShowCalendar(true)}
+          />
+          <GameMenu
+            user={user}
+            items={[
+              { icon: "home", label: "Practice mode", hint: "Unlimited rounds, any era", href: "/" },
+              {
+                icon: "calendar",
+                label: "Daily calendar",
+                hint: "Every day you've played",
+                onClick: () => setShowCalendar(true),
+              },
+              { icon: "help", label: "How to play", hint: "Rules in ten seconds", onClick: onHelp },
+            ]}
+          />
+        </GameHeader>
 
         {children}
+
+        {/* Below the deck, not above it: as a band up top this pushed the
+            player past the fold on a phone. */}
+        <div className="mt-6 border-t border-(--hairline) pt-4">
+          <DailyStreakStrip days={history.week} onOpenCalendar={() => setShowCalendar(true)} />
+        </div>
       </div>
 
       {showHelp && (
         <Modal title="How to play" onClose={onHelpClose}>
           <HowToPlayList maxAttempts={maxAttempts} />
         </Modal>
+      )}
+
+      {showCalendar && (
+        <DailyCalendarModal gameSlug={gameSlug} onClose={() => setShowCalendar(false)} />
       )}
     </div>
   );
@@ -156,7 +137,7 @@ function AlreadyPlayedPanel({ info }: { info: ChallengeInfo }) {
             {info.rewardCoins > 0 || info.rewardXp > 0 ? (
               <>
                 {info.rewardCoins > 0 && <p className="text-sm font-bold text-amber-500">{info.rewardCoins} coins</p>}
-                {info.rewardXp > 0 && <p className="text-sm font-bold text-violet-400">{info.rewardXp} XP</p>}
+                {info.rewardXp > 0 && <p className="text-sm font-bold text-(--success)">{info.rewardXp} XP</p>}
               </>
             ) : (
               <p className="text-sm font-bold text-(--text-faint)">—</p>
@@ -302,29 +283,6 @@ function DailyGame({
       onHelp={() => setShowHelp(true)}
       onHelpClose={() => setShowHelp(false)}
     >
-      {/* Round progress */}
-      {!showCompletion && game.phase !== "starting" && roundCount !== null && (
-        <div className="flex items-center justify-between border-b border-(--hairline) py-3">
-          <div className="flex items-center gap-1.5">
-            {Array.from({ length: roundCount }).map((_, i) => (
-              <span
-                key={i}
-                className={`h-2 w-2 rounded-full transition-colors ${
-                  i < game.roundsSolved
-                    ? "bg-(--signal)"
-                    : i === game.roundIndex - 1
-                      ? "bg-violet-400"
-                      : "bg-(--hairline)"
-                }`}
-              />
-            ))}
-          </div>
-          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-(--text-faint)">
-            Round {game.roundIndex} of {roundCount}
-          </span>
-        </div>
-      )}
-
       {game.error && game.phase === "error" ? (
         <RunErrorDialog
           message={game.error}
@@ -358,12 +316,42 @@ function DailyGame({
           dayKey={dayKey}
         />
       ) : (
-        <section className="py-7 sm:py-9" aria-labelledby="mystery-track-title">
-          <div className="mb-5">
-            <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-(--signal)">
-              Mystery track
-            </p>
-            <h1 id="mystery-track-title" className="mt-2 max-w-xl text-balance font-[family-name:var(--font-display)] text-2xl font-semibold leading-[1.05] tracking-[-0.02em] text-(--text) sm:text-3xl">
+        <section className="py-3 [@media(max-height:820px)]:py-2 sm:py-5" aria-labelledby="mystery-track-title">
+          {/* Round progress rides the eyebrow line — the same slot and chip
+              shape the practice screen uses for its loaded tape. As its own
+              band under the header it cost 45px of the fold, the difference
+              between seeing the guess box on a short phone and not. */}
+          <div className="mb-3 sm:mb-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-(--signal)">
+                Mystery track
+              </p>
+              {game.phase !== "starting" && roundCount !== null ? (
+                <div
+                  className="flex h-9 [@media(max-height:700px)]:h-8 shrink-0 items-center gap-2 rounded-full border border-(--hairline) bg-(--surface) px-3"
+                  aria-label={`Round ${game.roundIndex} of ${roundCount}`}
+                >
+                  <span className="flex items-center gap-1" aria-hidden="true">
+                    {Array.from({ length: roundCount }).map((_, i) => (
+                      <span
+                        key={i}
+                        className={`h-2 w-2 rounded-full transition-colors ${
+                          i < game.roundsSolved
+                            ? "bg-(--signal)"
+                            : i === game.roundIndex - 1
+                              ? "ring-2 ring-inset ring-(--signal)"
+                              : "bg-(--hairline)"
+                        }`}
+                      />
+                    ))}
+                  </span>
+                  <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-(--text-faint)">
+                    Round {game.roundIndex}/{roundCount}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+            <h1 id="mystery-track-title" className="mt-2 max-w-xl text-balance font-[family-name:var(--font-display)] text-2xl font-semibold leading-[1.05] tracking-[-0.02em] text-(--text) [@media(max-height:820px)]:mt-1 [@media(max-height:820px)]:text-xl sm:text-3xl">
               {prompt}
             </h1>
           </div>
@@ -380,7 +368,7 @@ function DailyGame({
             autoPlayToken={game.autoPlayToken}
           />
 
-          <div className="mt-5">
+          <div className="mt-3.5 [@media(max-height:820px)]:mt-2.5">
             <AttemptTimeline
               guesses={game.guesses}
               currentAttempt={game.attemptsUsed + 1}
@@ -398,7 +386,7 @@ function DailyGame({
           ) : null}
 
           {!resolved ? (
-            <div className="mt-5">
+            <div className="mt-3.5 [@media(max-height:820px)]:mt-2">
               <GuessAutocomplete
                 gameSlug={config.slug}
                 excludePuzzleIds={excludePuzzleIds}
@@ -451,6 +439,7 @@ function DailyGame({
               streak={game.streak}
               score={game.score}
               fullAudioUrl={game.revealAudioUrl}
+              youtubeVideoId={game.youtubeVideoId}
               audioLoading={game.revealAudioLoading}
               nextLabel={game.runStatus === "COMPLETED" ? "See results" : "Next track"}
               onNext={() => {
@@ -520,7 +509,7 @@ export default function DailyClient({ user, game: config }: { user: CurrentUser;
       >
         <div className="flex flex-col items-center py-20 text-center">
           <p className="text-sm text-(--text-dim)">No daily challenge is available today.</p>
-          <Link href="/" className="mt-4 text-sm font-semibold text-violet-400 underline underline-offset-4">
+          <Link href="/" className="mt-4 text-sm font-semibold text-(--signal) underline underline-offset-4">
             Back to Home
           </Link>
         </div>

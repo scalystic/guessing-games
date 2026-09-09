@@ -2,47 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { waveformBars } from "@/lib/cover";
-
-// Minimal type definitions for the YouTube IFrame Player API.
-type YTPlayerInstance = {
-  seekTo: (seconds: number, allowSeekAhead: boolean) => void;
-  playVideo: () => void;
-  pauseVideo: () => void;
-  loadVideoById: (options: { videoId: string; startSeconds?: number }) => void;
-  cueVideoById: (options: { videoId: string; startSeconds?: number }) => void;
-  destroy: () => void;
-  getPlayerState: () => number;
-  /// Media position in seconds. The stage clock is metered off this rather than
-  /// off wall-clock time — see the playback-clock note below.
-  getCurrentTime: () => number;
-  /// 0..1 of the video buffered. Distinguishes "still downloading" from
-  /// "stopped trying", which getPlayerState() cannot — see armYoutubeKick.
-  getVideoLoadedFraction: () => number;
-  /// Used by the priming play (see primeYoutubeRound), which is the only reason
-  /// this deck ever mutes: a muted play is the API's only way to make an embed
-  /// actually BUFFER, and it is exempt from autoplay blocking.
-  mute: () => void;
-  unMute: () => void;
-};
-
-declare global {
-  interface Window {
-    YT?: {
-      Player: new (
-        element: HTMLElement,
-        options: {
-          videoId: string;
-          playerVars?: Record<string, number | string>;
-          events?: {
-            onReady?: () => void;
-            onStateChange?: (event: { data: number }) => void;
-          };
-        },
-      ) => YTPlayerInstance;
-    };
-    onYouTubeIframeAPIReady?: () => void;
-  }
-}
+import { loadYouTubeAPI, YT_ENDED, YT_PLAYING, type YTPlayerInstance } from "@/lib/youtube";
 
 type Props = {
   audioUrl: string | null;
@@ -64,11 +24,6 @@ type Props = {
 
 const BAR_COUNT = 32;
 const FADE_OUT_MS = 15;
-
-/// YT.PlayerState, inlined rather than read off window.YT so the state handler
-/// does not depend on the API object having finished loading.
-const YT_ENDED = 0;
-const YT_PLAYING = 1;
 
 /// How long to wait for a play() to actually produce audio before giving up.
 /// Reaching this means the video never started — embed disabled, region block,
@@ -106,30 +61,6 @@ function formatDuration(ms: number) {
   const seconds = ms / 1000;
   const value = seconds < 1 ? seconds.toFixed(1) : Number.isInteger(seconds) ? seconds : seconds.toFixed(1);
   return `${value} sec`;
-}
-
-// Load YouTube IFrame API once globally.
-let ytApiLoaded = false;
-let ytApiReady = false;
-const ytReadyCallbacks: (() => void)[] = [];
-
-function loadYouTubeAPI(onReady: () => void): void {
-  if (ytApiReady) { onReady(); return; }
-  ytReadyCallbacks.push(onReady);
-  if (ytApiLoaded) return;
-  ytApiLoaded = true;
-
-  const prev = window.onYouTubeIframeAPIReady;
-  window.onYouTubeIframeAPIReady = () => {
-    prev?.();
-    ytApiReady = true;
-    for (const cb of ytReadyCallbacks) cb();
-    ytReadyCallbacks.length = 0;
-  };
-
-  const tag = document.createElement("script");
-  tag.src = "https://www.youtube.com/iframe_api";
-  document.head.appendChild(tag);
 }
 
 export function PlayerBar({
@@ -922,7 +853,7 @@ export function PlayerBar({
       : (isPlaying ? handleStop : handlePlay));
 
   return (
-    <section className="signal-deck rounded-[18px] p-4 text-[#f2e9d8] sm:p-6" aria-label="Mystery audio deck">
+    <section className="signal-deck rounded-[18px] p-4 text-[#f2e9d8] [@media(max-height:820px)]:p-3 [@media(max-height:700px)]:p-2 sm:p-6" aria-label="Mystery audio deck">
       {/* Hidden YouTube iframe — must be in the DOM for the IFrame API to attach */}
       {isYoutube && (
         <div
@@ -933,7 +864,7 @@ export function PlayerBar({
         </div>
       )}
 
-      <div className="flex items-start justify-between gap-4 border-b border-[#343b51] pb-4">
+      <div className="flex items-start justify-between gap-4 border-b border-[#343b51] pb-3 [@media(max-height:820px)]:pb-2 sm:pb-4">
         <div>
           <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-[#8e93a3]">
             Clip window
@@ -958,10 +889,10 @@ export function PlayerBar({
         </div>
       </div>
 
-      <div className="relative mt-5 p-4 rounded-[12px] bg-[#10131e] border border-[#2d3447] shadow-inner overflow-hidden">
+      <div className="relative mt-3.5 [@media(max-height:820px)]:mt-2 [@media(max-height:700px)]:mt-1.5 [@media(max-height:820px)]:p-2 sm:mt-5 p-3 sm:p-4 rounded-[12px] bg-[#10131e] border border-[#2d3447] shadow-inner overflow-hidden">
         <div className="absolute inset-2 bg-gradient-to-b from-[#2c3347] to-[#1a1e2b] rounded-[8px] border border-[#3e4761] shadow-md z-0 opacity-90" />
         <div className="absolute top-1/2 -translate-y-1/2 left-2 right-2 h-10 bg-gradient-to-r from-[#d99d2f]/10 via-[#3a7ad5]/15 to-[#d99d2f]/10 border-t border-b border-[#3e4761]/30 z-0 pointer-events-none" />
-        <div className="relative z-10 grid grid-cols-[42px_1fr_42px] items-center gap-3 rounded-[6px] bg-[#07090f] border border-[#1b1f2d] shadow-[inset_0_2px_8px_rgba(0,0,0,0.8)] px-3 py-4 sm:grid-cols-[56px_1fr_56px] sm:gap-5 sm:px-5 overflow-hidden">
+        <div className="relative z-10 grid grid-cols-[42px_1fr_42px] items-center gap-3 rounded-[6px] bg-[#07090f] border border-[#1b1f2d] shadow-[inset_0_2px_8px_rgba(0,0,0,0.8)] px-3 py-3 [@media(max-height:820px)]:py-2 sm:grid-cols-[56px_1fr_56px] sm:gap-5 sm:px-5 sm:py-4 overflow-hidden">
           <div className="absolute inset-0 pointer-events-none bg-gradient-to-tr from-transparent via-white/[0.015] to-white/[0.05] z-20" />
           <div className="absolute top-1 left-1 w-1 h-1 rounded-full bg-[#11141c] border border-[#252b3b]" />
           <div className="absolute top-1 right-1 w-1 h-1 rounded-full bg-[#11141c] border border-[#252b3b]" />
@@ -972,7 +903,7 @@ export function PlayerBar({
             SARGAM CH-1 • C90
           </div>
           <span className="cassette-reel relative aspect-square rounded-full z-10" data-playing={isPlaying} aria-hidden="true" />
-          <div className="relative flex h-10 items-center gap-0.5 overflow-hidden z-10" aria-hidden="true">
+          <div className="relative flex h-10 [@media(max-height:820px)]:h-8 items-center gap-0.5 overflow-hidden z-10" aria-hidden="true">
             {bars.map((height, index) => {
               const barPct = (index / BAR_COUNT) * 100;
               return (
@@ -991,7 +922,7 @@ export function PlayerBar({
         </div>
       </div>
 
-      <div className="mt-5 flex items-center gap-4 border-t border-[#2d3447] pt-5">
+      <div className="mt-3.5 flex items-center gap-4 border-t border-[#2d3447] pt-3.5 [@media(max-height:820px)]:mt-2.5 [@media(max-height:700px)]:mt-2 [@media(max-height:820px)]:pt-2.5 [@media(max-height:700px)]:pt-2 sm:mt-5 sm:pt-5">
         <button
           type="button"
           onClick={playHandler}
@@ -1071,7 +1002,7 @@ export function PlayerBar({
         </div>
       </div>
 
-      <ol className="mt-5 grid grid-cols-6 gap-1.5" aria-label="Reveal stages">
+      <ol className="mt-3.5 grid grid-cols-6 gap-1.5 [@media(max-height:820px)]:mt-2.5 sm:mt-5" aria-label="Reveal stages">
         {ladder.map((milliseconds) => {
           const current = milliseconds === revealMs;
           const unlocked = milliseconds <= revealMs;

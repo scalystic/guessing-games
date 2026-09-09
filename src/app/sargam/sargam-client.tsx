@@ -11,7 +11,9 @@ import { AttemptTimeline } from "@/components/AttemptTimeline";
 import { GuessAutocomplete } from "@/components/GuessAutocomplete";
 import { MissFlash } from "@/components/MissFlash";
 import { ResultPanel } from "@/components/ResultPanel";
-import { ProfileMenu } from "@/components/ProfileMenu";
+import { GameHeader } from "@/components/GameHeader";
+import { GameMenu } from "@/components/GameMenu";
+import { StreakPill } from "@/components/StreakPill";
 import { HowToPlayList } from "@/components/HowToPlayList";
 import { Modal } from "@/components/Modal";
 import { StatsList } from "@/components/StatsList";
@@ -26,102 +28,46 @@ function formatSeconds(milliseconds: number) {
   return seconds < 1 ? seconds.toFixed(1) : Number.isInteger(seconds) ? seconds : seconds.toFixed(1);
 }
 
-function StatsIcon() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-      <path d="M4 16V9m6 7V4m6 12v-5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function HelpIcon() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-      <circle cx="10" cy="10" r="7.5" />
-      <path d="M7.9 7.6a2.2 2.2 0 0 1 4.3.7c0 1.8-2.2 1.9-2.2 3.4M10 14.7h.01" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function ChallengeIcon() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-      <rect x="3" y="4" width="14" height="13" rx="2" />
-      <path d="M7 2v4M13 2v4M3 9h14" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function StreakIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" />
-    </svg>
-  );
-}
-
-function BestStreakIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M7 4h10v4a5 5 0 0 1-10 0V4z" />
-      <path d="M7 5H4.5A1.5 1.5 0 0 0 3 6.5c0 1.66 1.34 3 3 3M17 5h2.5A1.5 1.5 0 0 1 21 6.5c0 1.66-1.34 3-3 3" />
-      <path d="M12 13v3M9 20h6M10 20v-1.5a2 2 0 0 1 4 0V20" />
-    </svg>
-  );
-}
-
-type HeaderActionProps = {
-  label: string;
-  icon: React.ReactNode;
-  onClick: () => void;
-};
-
-const ERA_OPTIONS: { value: DecadeFilter | null; label: string }[] = [
-  { value: null, label: "All" },
-  { value: "NINETIES", label: "Old" },
-  { value: "TWO_THOUSANDS", label: "New" },
-];
-
-function EraFilterControl({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: DecadeFilter | null;
-  onChange: (next: DecadeFilter | null) => void;
-  disabled: boolean;
-}) {
-  return (
-    <div
-      className="flex items-center gap-1 rounded-full border border-(--hairline) bg-(--surface) p-1"
-      role="group"
-      aria-label="Song era"
-    >
-      {ERA_OPTIONS.map((option) => (
-        <button
-          key={option.label}
-          type="button"
-          disabled={disabled}
-          onClick={() => onChange(option.value)}
-          aria-pressed={value === option.value}
-          className={`rounded-full px-3 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.14em] transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50 ${
-            value === option.value
-              ? "bg-(--signal) text-(--signal-ink)"
-              : "text-(--text-faint) hover:bg-(--surface-hover) hover:text-(--text)"
-          }`}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 const ERA_PICKER_OPTIONS: { value: DecadeFilter | null; label: string; hint: string; tilt: string }[] = [
   { value: null, label: "All eras", hint: "Every song in the catalog", tilt: "sm:-rotate-2" },
   { value: "NINETIES", label: "Old", hint: "1960 – 1999", tilt: "sm:rotate-1" },
   { value: "TWO_THOUSANDS", label: "New", hint: "2000 – now", tilt: "sm:-rotate-1" },
 ];
+
+function eraLabel(value: DecadeFilter | null) {
+  return ERA_PICKER_OPTIONS.find((option) => option.value === value)?.label ?? "All eras";
+}
+
+/// The era filter used to be a three-way segmented control sitting next to the
+/// streak pill, which read as a settings toggle even though switching era
+/// restarts the run. Here it's a status chip on the mystery-track header: it
+/// shows which tape is loaded and opens the same tape picker to swap it.
+function LoadedTapeChip({
+  era,
+  disabled,
+  onOpen,
+}: {
+  era: DecadeFilter | null;
+  disabled: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      disabled={disabled}
+      aria-label={`Loaded tape: ${eraLabel(era)}. Change tape.`}
+      className="flex h-9 [@media(max-height:700px)]:h-8 shrink-0 items-center gap-2 rounded-full border border-(--hairline) bg-(--surface) pl-2.5 pr-3 transition-colors duration-200 hover:bg-(--surface-hover) disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <span className="cassette-reel h-4 w-4 shrink-0 rounded-full" aria-hidden="true" />
+      <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-(--text-faint)">Tape</span>
+      <span className="text-xs font-bold text-(--text)">{eraLabel(era)}</span>
+      <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-(--text-faint)" aria-hidden="true">
+        <path d="M4 7h9l-2.5-2.5M16 13H7l2.5 2.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
 
 /// One cassette shell, rendered small. Reuses the exact `.cassette-reel`
 /// mechanism from PlayerBar rather than a fresh illustration — when a tape is
@@ -130,11 +76,14 @@ function TapeCard({
   option,
   selected,
   dimmed,
+  loaded,
   onPick,
 }: {
   option: (typeof ERA_PICKER_OPTIONS)[number];
   selected: boolean;
   dimmed?: boolean;
+  /// This tape is the one the current run is already using.
+  loaded?: boolean;
   onPick: () => void;
 }) {
   return (
@@ -150,7 +99,9 @@ function TapeCard({
           ? "-translate-y-1 rotate-0 border-2 border-(--signal) shadow-[0_18px_36px_-16px_rgba(217,157,47,0.6)]"
           : dimmed
             ? "border-[#2d3447] opacity-40"
-            : "border-[#2d3447] hover:-translate-y-0.5 hover:rotate-0 hover:border-[#465074]"
+            : loaded
+              ? "border-(--signal)/50 hover:-translate-y-0.5 hover:rotate-0"
+              : "border-[#2d3447] hover:-translate-y-0.5 hover:rotate-0 hover:border-[#465074]"
       }`}
     >
       {/* Label window, echoing the cassette-shell stripe on the deck. */}
@@ -166,6 +117,11 @@ function TapeCard({
       <span className="mt-1.5 block font-mono text-[9px] uppercase tracking-[0.14em] text-[#8e93a3]">
         {option.hint}
       </span>
+      {loaded && !selected ? (
+        <span className="mt-2 block font-mono text-[8px] font-bold uppercase tracking-[0.18em] text-(--signal)">
+          In the deck
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -179,9 +135,13 @@ const TAPE_LOAD_DELAY_MS = 1000;
 /// dialog and starts the round with that filter immediately; there's no
 /// separate confirm step, since pressing play was already the confirm.
 function EraDialog({
+  loadedEra,
   onSelect,
   onClose,
 }: {
+  /// The era of the run already in progress, if any — swapping away from it
+  /// starts a fresh run, so the dialog says so instead of silently resetting.
+  loadedEra?: DecadeFilter | null;
   onSelect: (era: DecadeFilter | null) => void;
   onClose: () => void;
 }) {
@@ -222,8 +182,13 @@ function EraDialog({
               id="era-dialog-title"
               className="mt-1 font-[family-name:var(--font-display)] text-2xl font-semibold leading-none text-(--text)"
             >
-              Pick the decade you&apos;re playing.
+              {loadedEra === undefined ? "Pick the decade you're playing." : "Swap the tape in the deck."}
             </h2>
+            {loadedEra !== undefined ? (
+              <p className="mt-2 text-xs leading-5 text-(--text-faint)">
+                {eraLabel(loadedEra)} is loaded. Picking another one starts a fresh run.
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -248,26 +213,13 @@ function EraDialog({
               option={option}
               selected={pickedEra === option.value}
               dimmed={pickedEra !== undefined && pickedEra !== option.value}
+              loaded={loadedEra !== undefined && loadedEra === option.value}
               onPick={() => handlePick(option.value)}
             />
           ))}
         </div>
       </div>
     </div>
-  );
-}
-
-function HeaderAction({ label, icon, onClick }: HeaderActionProps) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex h-10 items-center gap-2 rounded-full border border-(--hairline) bg-(--surface) px-3 text-sm font-semibold text-(--text-dim) transition-colors duration-200 hover:bg-(--surface-hover) hover:text-(--text)"
-      aria-label={label}
-    >
-      {icon}
-      <span className="hidden sm:inline">{label}</span>
-    </button>
   );
 }
 
@@ -381,7 +333,7 @@ function TodaysChallengeModal({
                       <p className="text-sm font-bold text-amber-500">{challenge.rewardCoins} coins</p>
                     )}
                     {challenge.rewardXp > 0 && (
-                      <p className="text-sm font-bold text-violet-400">{challenge.rewardXp} XP</p>
+                      <p className="text-sm font-bold text-(--success)">{challenge.rewardXp} XP</p>
                     )}
                   </>
                 ) : (
@@ -403,7 +355,7 @@ function TodaysChallengeModal({
               <Link
                 href="/play/daily"
                 onClick={onClose}
-                className="block w-full rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-4 py-3 text-center text-sm font-bold text-white shadow-sm transition hover:opacity-90"
+                className="block w-full rounded-xl bg-(--signal) px-4 py-3 text-center text-sm font-bold text-(--signal-ink) shadow-sm transition hover:bg-[#ffd071]"
               >
                 Play Now
               </Link>
@@ -421,6 +373,7 @@ export default function Sargam({ user, game: config }: { user: CurrentUser; game
   const [showAuthGate, setShowAuthGate] = useState(false);
   const [showEraDialog, setShowEraDialog] = useState(false);
   const [showChallenge, setShowChallenge] = useState(false);
+  const [showMultiplayer, setShowMultiplayer] = useState(false);
   const game = useMelodleGame({
     gameSlug: config.slug,
     revealLadder: config.revealLadder,
@@ -479,53 +432,39 @@ export default function Sargam({ user, game: config }: { user: CurrentUser; game
   // space available" actually means — the same pattern the auth layout uses.
   return (
     <div className="page-backdrop min-h-full text-(--text)">
-      <div className="mx-auto flex w-full max-w-[760px] flex-col px-4 pb-12 pt-5 sm:px-6 sm:pb-16 sm:pt-8">
-        <header className="flex items-center justify-between gap-4 border-b border-(--hairline) pb-5">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2.5">
-              <span className="h-7 w-1.5 bg-(--signal)" aria-hidden="true" />
-              <p className="font-[family-name:var(--font-display)] text-3xl font-semibold leading-none tracking-[0.04em] text-(--text)">
-                SARGAM
-              </p>
-            </div>
-            <p className="mt-1.5 truncate pl-4 font-mono text-[9px] uppercase tracking-[0.18em] text-(--text-faint)">
-              The fifteen-second song game
-            </p>
-          </div>
-
-          <nav className="flex shrink-0 items-center gap-2" aria-label="Game controls">
-            <HeaderAction label="Daily" icon={<ChallengeIcon />} onClick={() => setShowChallenge(true)} />
-            <HeaderAction label="Stats" icon={<StatsIcon />} onClick={() => setShowStats(true)} />
-            <HeaderAction label="How to play" icon={<HelpIcon />} onClick={() => setShowHelp(true)} />
-            <MultiplayerEntry gameSlug={config.slug} tagline={config.tagline} revealLadder={config.revealLadder} maxAttempts={config.maxAttempts} user={user} />
-            <ProfileMenu user={user} />
-          </nav>
-        </header>
-
-        <section className="flex flex-wrap items-center justify-center gap-3 border-b border-(--hairline) py-3.5" aria-label="Current session">
-          <div className="flex items-center gap-3 rounded-full border border-(--hairline) bg-(--surface) px-4 py-1.5">
-            <span className="flex items-center gap-2">
-              <span className="text-(--signal)">
-                <StreakIcon />
-              </span>
-              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-(--text-faint)">Streak</span>
-              <span className="text-sm font-bold text-(--signal)">{game.streak}</span>
-            </span>
-            <span className="h-4 w-px bg-(--hairline)" aria-hidden="true" />
-            <span className="flex items-center gap-2">
-              <span className="text-(--text-faint)">
-                <BestStreakIcon />
-              </span>
-              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-(--text-faint)">Best</span>
-              <span className="text-sm font-bold text-(--text)">{game.bestStreak}</span>
-            </span>
-          </div>
-          <EraFilterControl
-            value={game.era}
-            onChange={(next) => game.setEra(next)}
-            disabled={game.pending || game.phase === "starting"}
+      <div className="mx-auto flex w-full max-w-[760px] flex-col px-4 pb-12 pt-3.5 [@media(max-height:820px)]:pt-2 sm:px-6 sm:pb-16 sm:pt-5">
+        <GameHeader subtitle="The fifteen-second song game">
+          {/* Streak reads from the header row instead of its own band above the
+              deck — same reason as the daily page: the game has to clear the
+              fold. Tapping it opens the full session stats. */}
+          <StreakPill
+            current={game.streak}
+            best={game.bestStreak}
+            ariaLabel={`Streak ${game.streak}, best ${game.bestStreak}. Open session stats.`}
+            onClick={() => setShowStats(true)}
           />
-        </section>
+          <GameMenu
+            user={user}
+            items={[
+              {
+                icon: "multiplayer",
+                label: "Multiplayer",
+                hint: "Play a room with friends",
+                badge: "New",
+                primary: true,
+                onClick: () => setShowMultiplayer(true),
+              },
+              {
+                icon: "daily",
+                label: "Daily challenge",
+                hint: "One set, everyone, today",
+                onClick: () => setShowChallenge(true),
+              },
+              { icon: "stats", label: "Stats", hint: "Streak, score, history", onClick: () => setShowStats(true) },
+              { icon: "help", label: "How to play", hint: "Rules in ten seconds", onClick: () => setShowHelp(true) },
+            ]}
+          />
+        </GameHeader>
 
         {game.error && game.phase !== "error" ? (
           <div className="mt-5 flex items-start gap-3 rounded-[8px] border border-(--miss) bg-(--surface) px-4 py-3 text-sm text-(--text)" role="alert">
@@ -544,16 +483,27 @@ export default function Sargam({ user, game: config }: { user: CurrentUser; game
           </div>
         ) : null}
 
-        <section className="py-7 sm:py-9" aria-labelledby="mystery-track-title">
-          <div className="mb-5 flex items-end justify-between gap-4">
-            <div>
+        <section className="py-3 [@media(max-height:820px)]:py-2 sm:py-5" aria-labelledby="mystery-track-title">
+          {/* Chip rides the eyebrow line, not the heading line: sharing a row
+              with the prompt squeezed it into an extra wrap on a phone. */}
+          <div className="mb-3 sm:mb-4">
+            <div className="flex items-center justify-between gap-3">
               <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-(--signal)">
                 Mystery track
               </p>
-              <h1 id="mystery-track-title" className="mt-2 max-w-xl text-balance font-[family-name:var(--font-display)] text-2xl font-semibold leading-[1.05] tracking-[-0.02em] text-(--text) sm:text-3xl">
-                {prompt}
-              </h1>
+              {/* Only once a tape is actually in the deck — while the picker is
+                  still pending, the player itself is the prompt to load one. */}
+              {!awaitingTape ? (
+                <LoadedTapeChip
+                  era={game.era}
+                  disabled={game.pending || game.phase === "starting"}
+                  onOpen={() => setShowEraDialog(true)}
+                />
+              ) : null}
             </div>
+            <h1 id="mystery-track-title" className="mt-2 max-w-xl text-balance font-[family-name:var(--font-display)] text-2xl font-semibold leading-[1.05] tracking-[-0.02em] text-(--text) [@media(max-height:820px)]:mt-1 [@media(max-height:820px)]:text-xl sm:text-3xl">
+              {prompt}
+            </h1>
           </div>
 
           <PlayerBar
@@ -571,7 +521,7 @@ export default function Sargam({ user, game: config }: { user: CurrentUser; game
             promptSubtitle={awaitingTape ? "Pick an era and the round starts." : undefined}
           />
 
-          <div className="mt-5">
+          <div className="mt-3.5 [@media(max-height:820px)]:mt-2.5">
             <AttemptTimeline
               guesses={game.guesses}
               currentAttempt={game.attemptsUsed + 1}
@@ -589,7 +539,7 @@ export default function Sargam({ user, game: config }: { user: CurrentUser; game
           ) : null}
 
           {!resolved ? (
-            <div className="mt-5">
+            <div className="mt-3.5 [@media(max-height:820px)]:mt-2">
               <GuessAutocomplete
                 gameSlug={config.slug}
                 excludePuzzleIds={excludePuzzleIds}
@@ -642,6 +592,7 @@ export default function Sargam({ user, game: config }: { user: CurrentUser; game
               streak={game.streak}
               score={game.score}
               fullAudioUrl={game.revealAudioUrl}
+              youtubeVideoId={game.youtubeVideoId}
               audioLoading={game.revealAudioLoading}
               onNext={handleNextRound}
               roundsSolved={game.roundsSolved}
@@ -696,8 +647,21 @@ export default function Sargam({ user, game: config }: { user: CurrentUser; game
         />
       ) : null}
 
+      {/* Mounted outside the header nav: its trigger is a menu row, and the
+          menu unmounts on click, which would take the picker with it. */}
+      <MultiplayerEntry
+        gameSlug={config.slug}
+        tagline={config.tagline}
+        revealLadder={config.revealLadder}
+        maxAttempts={config.maxAttempts}
+        user={user}
+        open={showMultiplayer}
+        onOpenChange={setShowMultiplayer}
+      />
+
       {showEraDialog ? (
         <EraDialog
+          loadedEra={awaitingTape ? undefined : game.era}
           onSelect={(era) => {
             setShowEraDialog(false);
             game.setEra(era);

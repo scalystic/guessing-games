@@ -1,59 +1,44 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { DailyCalendarModal } from "@/components/DailyCalendarModal";
-
-type Day = {
-  dayKey: string;
-  dayNumber: number;
-  isToday: boolean;
-  hasChallenge: boolean;
-  played: boolean;
-};
+import type { DailyDay } from "@/hooks/useDailyHistory";
 
 const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 
 /// A week-view strip of the last 7 days ending today, each a circle marked
 /// whether this player played that day's daily challenge — same idea as a
-/// Duolingo-style streak calendar. Backed by GET /api/daily-challenge/history,
-/// which reads Run history directly; nothing here is stored client-side.
-export function DailyStreakStrip({ gameSlug }: { gameSlug: string }) {
-  const [days, setDays] = useState<Day[] | null>(null);
-  const [showCalendar, setShowCalendar] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/daily-challenge/history?gameSlug=${encodeURIComponent(gameSlug)}&days=7`)
-      .then((r) => r.json())
-      .then((json) => {
-        if (!cancelled && json.data) setDays(json.data.days);
-      })
-      .catch(() => null);
-    return () => {
-      cancelled = true;
-    };
-  }, [gameSlug]);
-
+/// Duolingo-style streak calendar. The `days` come from useDailyHistory in the
+/// page, shared with the header streak pill.
+///
+/// This sits *below* the deck now. As a band above the game it pushed the
+/// player off the fold on a phone, which is why the circles are 32px here
+/// rather than 44px and the whole thing is one row.
+export function DailyStreakStrip({
+  days,
+  onOpenCalendar,
+}: {
+  days: DailyDay[] | null;
+  onOpenCalendar: () => void;
+}) {
   if (!days) {
     return (
-      <div className="flex justify-center gap-2 sm:gap-3" aria-hidden="true">
+      <div className="flex items-center justify-center gap-2" aria-hidden="true">
         {Array.from({ length: 7 }).map((_, i) => (
-          <div key={i} className="h-11 w-11 animate-pulse rounded-full bg-(--surface)" />
+          <div key={i} className="h-8 w-8 animate-pulse rounded-full bg-(--surface)" />
         ))}
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col items-center gap-3">
-      <ul className="flex justify-center gap-2 sm:gap-3" aria-label="Your last 7 daily challenges">
+    <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+      <ul className="flex items-center justify-center gap-1.5 sm:gap-2" aria-label="Your last 7 daily challenges">
         {days.map((day, i) => (
-          <li key={day.dayKey} className="flex flex-col items-center gap-1">
-            <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-(--text-faint)">
+          <li key={day.dayKey} className="flex flex-col items-center gap-0.5">
+            <span className="font-mono text-[8px] uppercase tracking-[0.1em] text-(--text-faint)">
               {WEEKDAY_LABELS[new Date(day.dayKey).getUTCDay()] ?? WEEKDAY_LABELS[i]}
             </span>
             <span
-              className="flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold transition"
+              className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold transition"
               style={
                 day.played
                   ? { background: "var(--signal)", color: "var(--signal-ink)" }
@@ -74,7 +59,7 @@ export function DailyStreakStrip({ gameSlug }: { gameSlug: string }) {
               }
             >
               {day.played ? (
-                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
                   <path d="M4 10.5l4 4 8-9" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               ) : (
@@ -87,15 +72,11 @@ export function DailyStreakStrip({ gameSlug }: { gameSlug: string }) {
 
       <button
         type="button"
-        onClick={() => setShowCalendar(true)}
-        className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-400 underline decoration-(--hairline) underline-offset-4 transition hover:text-violet-300"
+        onClick={onOpenCalendar}
+        className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-(--signal) underline decoration-(--hairline) underline-offset-4 transition hover:text-(--text)"
       >
-        View full calendar
+        Full calendar
       </button>
-
-      {showCalendar && (
-        <DailyCalendarModal gameSlug={gameSlug} onClose={() => setShowCalendar(false)} />
-      )}
     </div>
   );
 }
