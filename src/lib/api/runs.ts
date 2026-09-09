@@ -57,6 +57,10 @@ export type Reveal = {
   title: string;
   artist: string;
   album: string | null;
+  /// The film, when the track is from one. What the reveal actually shows —
+  /// `album` is kept alongside it only because the art lookup matches better
+  /// against the store's own collection name.
+  movie: string | null;
   releaseYear: number | null;
 };
 
@@ -155,6 +159,10 @@ export type CatalogMatch = {
   title: string;
   artist: string;
   album: string | null;
+  /// See Reveal.movie. Safe in a typeahead row for the same reason the rest of
+  /// this shape is: the endpoint is catalog-wide and has no idea which round is
+  /// live, so nothing it returns is a statement about the answer.
+  movie: string | null;
   releaseYear: number | null;
 };
 

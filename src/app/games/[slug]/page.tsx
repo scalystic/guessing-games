@@ -13,7 +13,7 @@ export async function generateMetadata({
   const { slug } = await params;
   const game = await getActiveGameBySlug(slug);
 
-  if (!game) return { title: "Game not found" };
+  if (!game) return { title: "Game not found", robots: { index: false } };
 
   const description =
     game.tagline ?? `${game.name} — ${game.maxAttempts} attempts per puzzle.`;
@@ -29,6 +29,15 @@ export async function generateMetadata({
       title: game.name,
       description,
     },
+    // Kept out of search on purpose. This route renders the engine's config —
+    // the reveal ladder, attempt and life counts — for the same Game row that
+    // /sargam is the marketed landing page for. Two indexable URLs describing
+    // one game is the textbook duplicate-content case, and the one that would
+    // lose is the wrong one: this page shows operational copy ("Songless") and
+    // a spec table, not the brand.
+    //
+    // follow: true because the "← All games" link out of here is legitimate.
+    robots: { index: false, follow: true },
   };
 }
 

@@ -1,6 +1,18 @@
+import type { Metadata } from "next";
 import { requireAdmin } from "@/lib/admin/auth";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { AdminTopbar } from "@/components/admin/AdminTopbar";
+
+/// Applies to every page in the group, so no admin screen has to remember to
+/// opt out of search on its own. Overriding `title.template` too: the console
+/// is an internal tool and "Songs · Cluecade" reads like a public page.
+export const metadata: Metadata = {
+  title: {
+    default: "Admin",
+    template: "%s · Cluecade Admin",
+  },
+  robots: { index: false, follow: false, nocache: true },
+};
 
 // The (protected) route group doesn't appear in the URL — /admin, /admin/songs,
 // and /admin/users all resolve normally — but it excludes the sibling

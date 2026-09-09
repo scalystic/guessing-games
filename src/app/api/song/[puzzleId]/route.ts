@@ -39,7 +39,7 @@ export async function PUT(request: Request, { params }: RouteParams): Promise<Re
   if (!existing) return notFoundJson(`No song found for puzzle ${puzzleId}.`);
 
   const decade = computeDecade(data.releaseYear);
-  const searchText = buildSearchText(data.title, data.artist);
+  const searchText = buildSearchText(data.title, data.artist, data.movie);
 
   try {
     await prisma.$transaction(async (tx) => {

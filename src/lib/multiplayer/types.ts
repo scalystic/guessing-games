@@ -42,6 +42,11 @@ export type RoundResults = {
     title: string
     artist: string
     album: string | null
+    /// The film, when the track is from one. What the reveal shows next to the
+    /// artist; `album` stays for the art lookup. Mirrors Reveal in
+    /// lib/api/runs.ts — and RoundResults in the backend's src/types.ts, which
+    /// is a hand-kept copy of this shape.
+    movie: string | null
     releaseYear: number | null
   }
   playerResults: RoundPlayerResult[]

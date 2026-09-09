@@ -134,6 +134,7 @@ export type AttemptResult = {
     title: string;
     artist: string;
     album: string | null;
+    movie: string | null;
     releaseYear: number | null;
   } | null;
   /// Clue about the CURRENT round, earned by attempts already spent. Null until
@@ -779,6 +780,7 @@ async function resolveAndAdvance(
     title: string | null;
     artist: string | null;
     album: string | null;
+    movie: string | null;
     release_year: number | null;
   };
 
@@ -851,6 +853,7 @@ async function resolveAndAdvance(
       s.title         AS title,
       s.artist        AS artist,
       s.album         AS album,
+      s.movie         AS movie,
       s."releaseYear" AS release_year
     FROM (SELECT 1) d
     LEFT JOIN "Song" s ON s."puzzleId" = ${round.puzzleId}
@@ -865,6 +868,7 @@ async function resolveAndAdvance(
           title: row.title,
           artist: row.artist,
           album: row.album,
+          movie: row.movie,
           releaseYear: row.release_year,
         }
       : null;
@@ -1236,6 +1240,7 @@ async function replay(tx: Tx, runId: string): Promise<TxResult> {
     title: string | null;
     artist: string | null;
     album: string | null;
+    movie: string | null;
     release_year: number | null;
     decade: number | null;
     genres: string[] | null;
@@ -1267,6 +1272,7 @@ async function replay(tx: Tx, runId: string): Promise<TxResult> {
       s.title               AS title,
       s.artist              AS artist,
       s.album               AS album,
+      s.movie               AS movie,
       s."releaseYear"       AS release_year,
       s.decade              AS decade,
       s.genres              AS genres,
@@ -1326,6 +1332,7 @@ async function replay(tx: Tx, runId: string): Promise<TxResult> {
               title: row.title,
               artist: row.artist,
               album: row.album,
+              movie: row.movie,
               releaseYear: row.release_year,
             }
           : null,

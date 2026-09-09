@@ -58,6 +58,10 @@ type Row = {
   title: string;
   artist: string;
   album: string | null;
+  /// The film, when the track is from one. Returned so the dropdown can label a
+  /// row "Arijit Singh · Brahmastra" instead of falling back to the store
+  /// collection, which for a film track is the film plus noise.
+  movie: string | null;
   releaseYear: number | null;
 };
 
@@ -95,8 +99,19 @@ export async function GET(
     //                 normalises over the WHOLE column, so a 5-character query
     //                 against "kesariya arijit singh" scores far below any
     //                 sane threshold and would never match.
+    //
+    // FILM SEARCH rides those same two matchers rather than adding a third:
+    // searchText is "title artist film" (lib/game/search-text.ts), so typing
+    // "brahmastra" finds the film's tracks with no extra predicate, no second
+    // index, and — the point — the exact same normalisation on both sides.
+    // Matching s.movie directly would compare a raw column against a
+    // normalised query, so any film with an accent or an apostrophe in its name
+    // would quietly never match.
+    //
+    // The corollary is that a row is only findable by film once its searchText
+    // has been recomputed: `npm run backfill:search-text`.
     const rows = await prisma.$queryRaw<Row[]>`
-      SELECT s."puzzleId", s.title, s.artist, s.album, s."releaseYear"
+      SELECT s."puzzleId", s.title, s.artist, s.album, s.movie, s."releaseYear"
       FROM "Song" s
       JOIN "Puzzle" p
         ON p.id = s."puzzleId"
@@ -128,9 +143,18 @@ export async function GET(
           )
         )
       ORDER BY
-        -- Prefix of "title artist" first: someone typing "kesa" wants Kesariya
-        -- above a track merely containing the letters somewhere.
-        (s."searchText" LIKE ${`${query}%`}) DESC,
+        -- Prefix of "title artist film" first: someone typing "kesa" wants
+        -- Kesariya above a track merely containing the letters somewhere. The
+        -- film sits at the END of searchText, so this key still belongs to
+        -- title and artist — a film match ranks below every title match rather
+        -- than dragging a whole soundtrack to the top of the list.
+        --
+        -- COALESCE because searchText is nullable: NULL LIKE anything is NULL,
+        -- and DESC puts NULLs FIRST, so a row that matched only through its
+        -- aliases would sort above every genuine prefix hit.
+        -- (No backticks in here: this comment lives inside a JS template
+        -- literal, and one would end the query mid-sentence.)
+        COALESCE(s."searchText" LIKE ${`${query}%`}, false) DESC,
         word_similarity(${query}, s."searchText") DESC,
         s.title ASC
       LIMIT ${limit}

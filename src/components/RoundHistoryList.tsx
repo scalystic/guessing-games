@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { RoundHistoryEntry } from "@/hooks/useMelodleGame";
 import { CoverArt } from "@/components/CoverArt";
+import { songSubtitle, songTitle } from "@/lib/song-label";
 
 const COLLAPSED_COUNT = 3;
 
@@ -72,10 +73,10 @@ export function RoundHistoryList({ entries, now }: { entries: RoundHistoryEntry[
             </span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium text-(--text)">
-                {entry.song.title}
+                {songTitle(entry.song.title)}
               </span>
               <span className="mt-0.5 block truncate text-xs text-(--text-faint)">
-                {[entry.song.artist, entry.song.album].filter(Boolean).join(" · ")}
+                {songSubtitle(entry.song)}
               </span>
             </span>
             <span className="shrink-0 text-right text-xs text-(--text-faint)">

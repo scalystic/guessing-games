@@ -5,6 +5,7 @@ import type { RoundStatus, RoundHistoryEntry, AchievementEntry } from "@/hooks/u
 import type { Reveal } from "@/lib/api/runs";
 import { fetchAlbumArtUrl } from "@/lib/album-art";
 import { Confetti } from "@/components/Confetti";
+import { songSubtitleWithYear, songTitle } from "@/lib/song-label";
 
 type Props = {
   reveal: Reveal;
@@ -238,10 +239,10 @@ export function ResultPanel({
               {won ? "You guessed" : "The track was"}
             </p>
             <h2 id="result-title" className="mt-1 text-balance font-[family-name:var(--font-display)] text-3xl font-semibold leading-[0.95] tracking-[-0.02em] text-(--text)">
-              {reveal.title}
+              {songTitle(reveal.title)}
             </h2>
             <p className="mt-2 font-[family-name:var(--font-display)] text-xs leading-4 text-(--text-dim)">
-              {[reveal.artist, reveal.album, reveal.releaseYear].filter(Boolean).join(" · ")}
+              {songSubtitleWithYear(reveal)}
             </p>
           </div>
         </div>

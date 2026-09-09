@@ -4,6 +4,12 @@ import AdminLoginForm from "./admin-login-form";
 export const metadata: Metadata = {
   title: "Admin Login",
   description: "Sign in to the Cluecade admin console.",
+  // Belt and braces. robots.ts already disallows /admin, but a Disallow is a
+  // request not to crawl, not a guarantee of exclusion — a URL that gets linked
+  // from somewhere else can still appear as a bare result. This tag closes that
+  // gap for the one /admin page a crawler can actually fetch (the rest sit
+  // behind requireAdmin()).
+  robots: { index: false, follow: false, nocache: true },
 };
 
 export default function AdminLoginPage() {

@@ -125,7 +125,7 @@ async function main() {
         movie,
         variantType,
         decade: computeDecade(song.releaseYear),
-        searchText: buildSearchText(title, artist.artist),
+        searchText: buildSearchText(title, artist.artist, movie),
         // The store title stays reachable by the typeahead. A player who knows
         // the track as `Kesariya (From "Brahmastra")` must still be able to
         // find it after the name became `Kesariya`.

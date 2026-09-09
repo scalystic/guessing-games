@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { JsonLd } from "@/components/JsonLd";
 import {
   CONTACTS,
   EFFECTIVE_FROM,
   GRIEVANCE_OFFICER,
   OPERATOR,
 } from "@/lib/legal";
+import { legalBreadcrumbNode } from "@/lib/structured-data";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
@@ -17,6 +19,7 @@ export const metadata: Metadata = {
 export default function PrivacyPage() {
   return (
     <article className="legal-prose">
+      <JsonLd data={legalBreadcrumbNode("Privacy Policy")} />
       <h1 className="font-[family-name:var(--font-display)] text-3xl font-bold tracking-tight text-(--text)">
         Privacy Policy
       </h1>

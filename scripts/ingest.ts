@@ -384,7 +384,7 @@ async function persist(
     isrc: track.isrc ?? null,
     externalId: track.externalId ?? null,
     aliases: track.aliases,
-    searchText: buildSearchText(track.title, track.artist),
+    searchText: buildSearchText(track.title, track.artist, track.movie),
   }
 
   const assetFields = {

@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { JsonLd } from "@/components/JsonLd";
 import { LAST_UPDATED, LEGAL_PAGES } from "@/lib/legal";
+import { legalBreadcrumbNode } from "@/lib/structured-data";
 
 export const metadata: Metadata = {
   title: "Legal",
@@ -15,6 +17,8 @@ export const metadata: Metadata = {
 export default function LegalIndexPage() {
   return (
     <article>
+      {/* No document name — this is the index, so the trail stops at "Legal". */}
+      <JsonLd data={legalBreadcrumbNode()} />
       <h1 className="font-[family-name:var(--font-display)] text-3xl font-bold tracking-tight text-(--text)">
         Legal
       </h1>

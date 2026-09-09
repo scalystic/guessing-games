@@ -322,9 +322,16 @@ model Song {
   /// This holds the bare film title, and only when something actually
   /// identified the track as a film track.
   ///
-  /// Deliberately NOT part of searchText: the typeahead matches what a player
-  /// is guessing, and letting a film name surface its songs would hand over
-  /// answers.
+  /// IS part of searchText, as of the film-search change. It used to be
+  /// deliberately excluded — "letting a film name surface its songs would hand
+  /// over answers" — and that cost is real: a player who has worked out the
+  /// film can type it and read off its tracklist. It was accepted because the
+  /// catalog is mostly film music and "that song from Animal" is how players
+  /// actually know a track. The film is appended LAST in buildSearchText, so a
+  /// title or artist match still wins the prefix ranking.
+  ///
+  /// Changing this field's contribution to searchText means every existing row
+  /// is stale until `npm run backfill:search-text` runs.
   movie  String?
 
   /// NULL = this is the original recording. Anything else says why it is not,

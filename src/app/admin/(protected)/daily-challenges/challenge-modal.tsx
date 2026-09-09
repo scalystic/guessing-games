@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { songSubtitle, songTitle } from "@/lib/song-label";
 import type { Challenge } from "./challenges-list";
 
 type SongResult = {
@@ -8,6 +9,7 @@ type SongResult = {
   title: string;
   artist: string;
   album: string | null;
+  movie: string | null;
   externalId: string | null;
   /// dayKey of the nearest daily challenge already using this song within the
   /// 30-day no-repeat window, or null if it's free to pick.
@@ -361,11 +363,10 @@ export function ChallengeModal({ challenge, onClose, onSaved }: Props) {
                                     >
                                       <div className="min-w-0 flex-1">
                                         <p className="truncate text-sm font-medium text-(--text)">
-                                          {song.title}
+                                          {songTitle(song.title)}
                                         </p>
                                         <p className="truncate text-xs text-(--text-dim)">
-                                          {song.artist}
-                                          {song.album ? ` · ${song.album}` : ""}
+                                          {songSubtitle(song)}
                                           {song.externalId ? " · YouTube" : ""}
                                         </p>
                                       </div>

@@ -22,6 +22,7 @@ type RevealedSong = {
   title: string;
   artist: string;
   album: string | null;
+  movie: string | null;
   releaseYear: number | null;
 };
 
@@ -118,6 +119,7 @@ export async function GET(
                 title: true,
                 artist: true,
                 album: true,
+                movie: true,
                 releaseYear: true,
                 decade: true,
                 genres: true,
@@ -219,6 +221,7 @@ export async function GET(
               title: round.puzzle.song.title,
               artist: round.puzzle.song.artist,
               album: round.puzzle.song.album,
+              movie: round.puzzle.song.movie,
               releaseYear: round.puzzle.song.releaseYear,
             }
           : null,

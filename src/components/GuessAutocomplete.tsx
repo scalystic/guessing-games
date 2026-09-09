@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { PendingAction } from "@/hooks/useMelodleGame";
 import { searchCatalog, type CatalogMatch } from "@/lib/api/runs";
 import { CoverArt } from "@/components/CoverArt";
+import { songSubtitle, songTitle } from "@/lib/song-label";
 
 /// Typeahead over the catalog, backed by GET /api/games/[slug]/search.
 ///
@@ -211,7 +212,7 @@ export function GuessAutocomplete({
             }}
             onFocus={() => setOpen(true)}
             onKeyDown={handleKeyDown}
-            placeholder={pendingCopy ?? (disabled ? "Preparing the round…" : "Song title or artist")}
+            placeholder={pendingCopy ?? (disabled ? "Preparing the round…" : "Song, artist or film")}
             className="h-12 w-full rounded-[7px] border border-(--hairline) bg-(--surface) pr-4 pl-10 text-base text-(--text) placeholder:text-(--text-faint) transition-colors duration-200 focus:border-(--signal) focus:bg-(--surface-strong) focus-visible:outline-none disabled:cursor-wait disabled:opacity-70"
           />
           {showDropdown && (
@@ -241,11 +242,10 @@ export function GuessAutocomplete({
                     />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium text-(--text)">
-                        {match.title}
+                        {songTitle(match.title)}
                       </span>
                       <span className="block truncate text-xs text-(--text-dim)">
-                        {match.artist}
-                        {match.album ? ` · ${match.album}` : ""}
+                        {songSubtitle(match)}
                       </span>
                     </span>
                   </button>

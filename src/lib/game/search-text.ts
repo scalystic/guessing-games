@@ -34,7 +34,18 @@ export function normalizeSearchText(input: string): string {
     .trim();
 }
 
-/// The indexed form of a catalog entry: normalised title + artist.
-export function buildSearchText(title: string, artist: string): string {
-  return normalizeSearchText(`${title} ${artist}`);
+/// The indexed form of a catalog entry: normalised title + artist + film.
+///
+/// The film is in here so a player who knows a track only as "that song from
+/// Animal" can find it by typing the film name. That is a deliberate reversal
+/// of the original rule (see Song.movie in schema.prisma): it does let someone
+/// who has already guessed the film list its tracks, and the film is the LAST
+/// component so a title or artist match still out-ranks it on the prefix test
+/// in api/games/[slug]/search.
+///
+/// `movie` is optional rather than nullable-required because one caller
+/// (scripts/lib/metadata.ts) uses this purely as a tokeniser for a single
+/// string and has no song to speak of.
+export function buildSearchText(title: string, artist: string, movie?: string | null): string {
+  return normalizeSearchText(`${title} ${artist} ${movie ?? ""}`);
 }

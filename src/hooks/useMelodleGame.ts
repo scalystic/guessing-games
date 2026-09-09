@@ -61,7 +61,13 @@ export type GuessRecord = {
 };
 
 export type RoundHistoryEntry = {
-  song: { title: string; artist: string; album: string | null; releaseYear: number | null };
+  song: {
+    title: string;
+    artist: string;
+    album: string | null;
+    movie: string | null;
+    releaseYear: number | null;
+  };
   solved: boolean;
   attemptsUsed: number;
   at: number;

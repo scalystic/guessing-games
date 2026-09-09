@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { JsonLd } from "@/components/JsonLd";
 import { CONTACTS, EFFECTIVE_FROM } from "@/lib/legal";
+import { legalBreadcrumbNode } from "@/lib/structured-data";
 
 export const metadata: Metadata = {
   title: "Cookie Policy",
@@ -12,6 +14,7 @@ export const metadata: Metadata = {
 export default function CookiePolicyPage() {
   return (
     <article className="legal-prose">
+      <JsonLd data={legalBreadcrumbNode("Cookie Policy")} />
       <h1 className="font-[family-name:var(--font-display)] text-3xl font-bold tracking-tight text-(--text)">
         Cookie Policy
       </h1>

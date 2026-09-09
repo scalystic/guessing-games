@@ -153,7 +153,7 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const decade = computeDecade(releaseYear ?? null)
-    const searchText = buildSearchText(songTitle, songArtist)
+    const searchText = buildSearchText(songTitle, songArtist, movie)
     const ingestRef = videoId
 
     const puzzleId = await prisma.$transaction(async (tx) => {

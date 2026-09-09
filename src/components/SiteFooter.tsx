@@ -2,14 +2,21 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LEGAL_PAGES, OPERATOR } from "@/lib/legal";
+import { OPERATOR } from "@/lib/legal";
 
 /// The site-wide footer, mounted once in the root layout.
+///
+/// One link, to the /legal index, rather than one per document. The index is
+/// already built to be the hub — it lists all five with a blurb each — and five
+/// links wrapping across a phone footer under every screen in the product cost
+/// more than they bought.
 ///
 /// Client-side only for the pathname check — it still renders to HTML on the
 /// server, which matters: Google's OAuth verification (and anyone auditing the
 /// site) looks for a reachable privacy policy link, and a link that only exists
-/// after hydration is one some crawlers never see.
+/// after hydration is one some crawlers never see. The policy is now one hop
+/// away via /legal rather than linked directly; if a verification form wants a
+/// direct URL, give it /legal/privacy.
 ///
 /// Hidden under /admin. That console is an internal tool behind a login, its
 /// layout is deliberately min-h-screen (see the comment there), and appending a
@@ -35,20 +42,12 @@ export function SiteFooter() {
           instead shifts these links a padding-width left of the content they
           sit under. */}
       <div className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-        <nav aria-label="Legal">
-          <ul className="flex flex-wrap items-center gap-x-5 gap-y-2">
-            {LEGAL_PAGES.map((page) => (
-              <li key={page.href}>
-                <Link
-                  href={page.href}
-                  className="transition-colors hover:text-(--text) hover:underline hover:underline-offset-4"
-                >
-                  {page.label}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </nav>
+        <Link
+          href="/legal"
+          className="transition-colors hover:text-(--text) hover:underline hover:underline-offset-4"
+        >
+          Terms, Privacy &amp; Legal
+        </Link>
 
         <p className="text-(--text-faint)">
           © {year} {OPERATOR.tradeName}

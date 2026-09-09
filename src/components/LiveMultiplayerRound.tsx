@@ -10,6 +10,7 @@ import { ProfileMenu } from "@/components/ProfileMenu";
 import { toPlayerView, type PlayerView } from "@/lib/multiplayer/player-view";
 import { previewPoints } from "@/lib/game/scoring/preview";
 import { newIdempotencyKey, type CatalogMatch, type RoundHint } from "@/lib/api/runs";
+import { songSubtitleWithYear, songTitle } from "@/lib/song-label";
 import type { GuessRecord, PendingAction } from "@/hooks/useMelodleGame";
 import type { UseMultiplayerRoomResult } from "@/hooks/useMultiplayerRoom";
 import type { CurrentUser } from "@/lib/get-current-user";
@@ -598,11 +599,11 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
                 className="h-16 w-16 shrink-0 rounded-[10px] shadow-lg"
               />
               <div className="min-w-0">
-                <h2 className="truncate font-[family-name:var(--font-display)] text-xl font-bold text-(--text)">{roundResults.puzzle.title}</h2>
+                <h2 className="truncate font-[family-name:var(--font-display)] text-xl font-bold text-(--text)">
+                  {songTitle(roundResults.puzzle.title)}
+                </h2>
                 <p className="truncate text-xs text-(--text-faint)">
-                  {roundResults.puzzle.artist}
-                  {roundResults.puzzle.album ? ` · ${roundResults.puzzle.album}` : ""}
-                  {roundResults.puzzle.releaseYear ? ` · ${roundResults.puzzle.releaseYear}` : ""}
+                  {songSubtitleWithYear(roundResults.puzzle)}
                 </p>
               </div>
             </div>

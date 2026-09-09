@@ -20,7 +20,7 @@ export function HowToPlayList({ maxAttempts }: { maxAttempts: number }) {
     {
       content: (
         <>
-          Search by <strong className="font-semibold text-(--text)">song title or artist</strong>, then choose a catalog match.
+          Search by <strong className="font-semibold text-(--text)">song, artist or film</strong>, then choose a catalog match.
         </>
       ),
       color: "#a855f7",

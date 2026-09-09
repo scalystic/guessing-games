@@ -57,7 +57,7 @@ async function main() {
           decade: computeDecade(fix.releaseYear),
           album: fix.album,
           genres: fix.genres,
-          searchText: buildSearchText(fix.title, fix.artist),
+          searchText: buildSearchText(fix.title, fix.artist, fix.movie),
           // The scraped headline goes to aliases, not the bin. It is what the
           // row was found under, and a player who typed it should still match.
           //

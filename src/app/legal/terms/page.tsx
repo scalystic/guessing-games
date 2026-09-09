@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { JsonLd } from "@/components/JsonLd";
 import {
   CONTACTS,
   EFFECTIVE_FROM,
@@ -7,6 +8,7 @@ import {
   JURISDICTION_CITY,
   OPERATOR,
 } from "@/lib/legal";
+import { legalBreadcrumbNode } from "@/lib/structured-data";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
@@ -18,6 +20,7 @@ export const metadata: Metadata = {
 export default function TermsPage() {
   return (
     <article className="legal-prose">
+      <JsonLd data={legalBreadcrumbNode("Terms of Service")} />
       <h1 className="font-[family-name:var(--font-display)] text-3xl font-bold tracking-tight text-(--text)">
         Terms of Service
       </h1>

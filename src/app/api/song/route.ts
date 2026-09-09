@@ -348,7 +348,7 @@ async function createSong(data: SongMetadataInput): Promise<Response> {
   }
 
   const decade = computeDecade(data.releaseYear);
-  const searchText = buildSearchText(data.title, data.artist);
+  const searchText = buildSearchText(data.title, data.artist, data.movie);
 
   try {
     const puzzleId = await prisma.$transaction(async (tx) => {

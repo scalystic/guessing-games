@@ -33,6 +33,11 @@ export async function GET(request: Request): Promise<Response> {
         OR: [
           { title: { contains: q, mode: "insensitive" } },
           { artist: { contains: q, mode: "insensitive" } },
+          // The film too, so an admin filling a week of dailies can pull up a
+          // soundtrack by name. Matched on the raw column rather than through
+          // Song.searchText: `contains` is a plain ILIKE with no normalisation
+          // on either side, so the two agree without the query needing any.
+          { movie: { contains: q, mode: "insensitive" } },
         ],
       },
       take: limit,
@@ -41,6 +46,7 @@ export async function GET(request: Request): Promise<Response> {
         title: true,
         artist: true,
         album: true,
+        movie: true,
         externalId: true,
         // Unlocked songs are still returned rather than filtered out, so the
         // picker can say "in review" instead of silently having no results for a
