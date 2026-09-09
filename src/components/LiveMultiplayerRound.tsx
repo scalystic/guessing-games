@@ -467,6 +467,14 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
                 waveformSeed={`${myRun?.runId ?? "run"}:${room?.currentRound ?? 1}`}
                 autoPlayToken={autoPlayToken}
                 promptSubtitle="Everyone in the room hears the same clip."
+                attemptIndicator={
+                  <AttemptTimeline
+                    guesses={guesses}
+                    currentAttempt={guesses.length + 1}
+                    maxAttempts={maxAttempts}
+                  />
+                }
+                unlockingMs={pendingAction === "skip" ? revealLadder[stageReached] ?? null : null}
               />
               {lastPoints !== null && (
                 <span className="self-start rounded-[4px] border border-(--success)/40 bg-(--success)/12 px-2.5 py-1.5 font-mono text-[11px] font-bold text-(--success)">
@@ -474,8 +482,6 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
                 </span>
               )}
             </div>
-
-            <AttemptTimeline guesses={guesses} currentAttempt={guesses.length + 1} maxAttempts={maxAttempts} />
 
             {!roundDone && <HintLadder hint={hint} />}
 

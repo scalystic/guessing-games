@@ -366,15 +366,15 @@ function DailyGame({
             loading={game.audioLoading || game.phase === "starting"}
             waveformSeed={`${game.runId ?? "run"}:${game.roundIndex}`}
             autoPlayToken={game.autoPlayToken}
+            attemptIndicator={
+              <AttemptTimeline
+                guesses={game.guesses}
+                currentAttempt={game.attemptsUsed + 1}
+                maxAttempts={game.maxAttempts}
+              />
+            }
+            unlockingMs={game.pendingAction === "skip" ? nextRevealMs : null}
           />
-
-          <div className="mt-3.5 [@media(max-height:820px)]:mt-2.5">
-            <AttemptTimeline
-              guesses={game.guesses}
-              currentAttempt={game.attemptsUsed + 1}
-              maxAttempts={game.maxAttempts}
-            />
-          </div>
 
           {game.hint && !resolved ? (
             <div className="mt-4 border-l-2 border-(--signal) bg-(--surface) px-4 py-3 text-sm text-(--text-dim)">

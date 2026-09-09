@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { waveformBars } from "@/lib/cover";
 import { loadYouTubeAPI, YT_ENDED, YT_PLAYING, type YTPlayerInstance } from "@/lib/youtube";
 
@@ -18,6 +18,8 @@ type Props = {
   onPlayRequested?: () => void;
   promptTitle?: string;
   promptSubtitle?: string;
+  attemptIndicator?: ReactNode;
+  unlockingMs?: number | null;
   /// Bump to start the clip without a click. See the effect that consumes it.
   autoPlayToken?: number;
 };
@@ -63,6 +65,42 @@ function formatDuration(ms: number) {
   return `${value} sec`;
 }
 
+function LevelMeter({ levels }: { levels: number[] }) {
+  return (
+    <div
+      className="w-full shrink-0 rounded border border-[#2b3244] bg-[#0b0d14] p-2 shadow-inner sm:w-[138px]"
+      aria-hidden="true"
+    >
+      <div className="mb-1 flex items-center justify-between px-1 font-mono text-[6px] text-[#767e92]">
+        <span>LEVEL</span>
+        <span>VU</span>
+      </div>
+      {["L", "R"].map((channel, channelIndex) => (
+        <div key={channel} className="flex items-center gap-[2px] [&+&]:mt-1">
+          <span className="w-2.5 font-mono text-[7px] text-[#767e92]">{channel}</span>
+          {Array.from({ length: 8 }).map((_, index) => {
+            const active = levels[channelIndex] > index;
+            const color = !active
+              ? "bg-[#202534]"
+              : index < 5
+                ? "bg-[#35b96f] shadow-[0_0_4px_rgba(53,185,111,0.65)]"
+                : index < 7
+                  ? "bg-[#e6af38] shadow-[0_0_4px_rgba(230,175,56,0.65)]"
+                  : "bg-[#ef5b57] shadow-[0_0_5px_rgba(239,91,87,0.75)]";
+
+            return (
+              <span
+                key={index}
+                className={`h-1 flex-1 rounded-[1px] transition-[background-color,box-shadow] duration-75 ${color}`}
+              />
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function PlayerBar({
   audioUrl,
   youtubeVideoId,
@@ -75,6 +113,8 @@ export function PlayerBar({
   onPlayRequested,
   promptTitle,
   promptSubtitle,
+  attemptIndicator,
+  unlockingMs = null,
   autoPlayToken = 0,
 }: Props) {
   // Stored-audio refs
@@ -165,16 +205,17 @@ export function PlayerBar({
   const [awaitingAudio, setAwaitingAudio] = useState(false);
   const [progressMs, setProgressMs] = useState(0);
   const [vuLevels, setVuLevels] = useState([0, 0]);
-
   useEffect(() => { revealMsRef.current = revealMs; }, [revealMs]);
 
   useEffect(() => {
-    // Not while cueing: needles bouncing over silence is the same lie as "On air".
     if (!isPlaying || awaitingAudio) return;
     const interval = setInterval(() => {
       setVuLevels([Math.floor(Math.random() * 8) + 1, Math.floor(Math.random() * 8) + 1]);
     }, 100);
-    return () => { clearInterval(interval); setVuLevels([0, 0]); };
+    return () => {
+      clearInterval(interval);
+      setVuLevels([0, 0]);
+    };
   }, [isPlaying, awaitingAudio]);
 
   // Stored-audio element lifecycle
@@ -677,6 +718,9 @@ export function PlayerBar({
   /// was the round-change half of "the first click does nothing".
   useEffect(() => {
     stopYoutubePlayback();
+    // This effect synchronizes React's readout with the external iframe player
+    // when its media source changes; the reset must happen in the same commit.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (isPlaying) setIsPlaying(false);
     if (progressMs !== 0) setProgressMs(0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -842,6 +886,8 @@ export function PlayerBar({
   const isYoutube = Boolean(youtubeVideoId);
   const playedPct = totalMs > 0 ? Math.min(100, (progressMs / totalMs) * 100) : 0;
   const bars = useMemo(() => waveformBars(waveformSeed, BAR_COUNT), [waveformSeed]);
+  const currentStageIndex = Math.max(0, ladder.indexOf(revealMs));
+  const railProgress = ladder.length > 1 ? (currentStageIndex / (ladder.length - 1)) * 100 : 0;
 
   const disabled = onPlayRequested
     ? loading
@@ -864,15 +910,12 @@ export function PlayerBar({
         </div>
       )}
 
-      <div className="flex items-start justify-between gap-4 border-b border-[#343b51] pb-3 [@media(max-height:820px)]:pb-2 sm:pb-4">
-        <div>
+      <div className="flex min-h-8 items-center justify-between gap-3 border-b border-[#343b51] pb-3 [@media(max-height:820px)]:pb-2 sm:pb-4">
+        {attemptIndicator ?? (
           <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-[#8e93a3]">
-            Clip window
+            Mystery signal
           </p>
-          <p className="mt-1 font-[family-name:var(--font-display)] text-2xl font-semibold leading-none tracking-[-0.02em] text-[#f2e9d8] sm:text-3xl">
-            {formatDuration(revealMs)}
-          </p>
-        </div>
+        )}
         <div className="border border-[#394056] px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[#a8adba] flex items-center gap-1.5 rounded-[4px]">
           {isPlaying && !awaitingAudio && (
             <span className="h-1.5 w-1.5 rounded-full bg-[#ff4d4d] animate-pulse shadow-[0_0_6px_#ff4d4d]" />
@@ -922,12 +965,23 @@ export function PlayerBar({
         </div>
       </div>
 
-      <div className="mt-3.5 flex items-center gap-4 border-t border-[#2d3447] pt-3.5 [@media(max-height:820px)]:mt-2.5 [@media(max-height:700px)]:mt-2 [@media(max-height:820px)]:pt-2.5 [@media(max-height:700px)]:pt-2 sm:mt-5 sm:pt-5">
+      {/* Equal outer columns keep the transport control physically centered,
+          regardless of how wide the duration or VU meter becomes. */}
+      <div className="mt-3.5 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-t border-[#2d3447] pt-3.5 [@media(max-height:820px)]:mt-2.5 [@media(max-height:700px)]:mt-2 [@media(max-height:820px)]:pt-2.5 [@media(max-height:700px)]:pt-2 sm:mt-5 sm:pt-5">
+        <div className="min-w-0 pr-3 sm:pr-5">
+          <p className="font-[family-name:var(--font-display)] text-[1.65rem] font-semibold leading-none tracking-[-0.035em] text-[#f2e9d8] sm:text-3xl">
+            {formatDuration(revealMs)}
+          </p>
+          <p className="mt-1.5 font-mono text-[7px] font-semibold uppercase tracking-[0.2em] text-[#737b91] sm:text-[8px]">
+            Current clip
+          </p>
+        </div>
+
         <button
           type="button"
           onClick={playHandler}
           disabled={disabled}
-          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-(--signal) text-(--signal-ink) transition-colors duration-200 hover:bg-[#ffd071] disabled:cursor-not-allowed disabled:opacity-45"
+          className="radio-play-button relative flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-[#ffd071]/70 bg-(--signal) text-(--signal-ink) shadow-[0_8px_22px_-9px_rgba(242,184,75,0.85)] transition-[background-color,transform] duration-200 enabled:hover:scale-[1.04] enabled:hover:bg-[#ffd071] enabled:active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45 sm:h-16 sm:w-16"
           aria-label={
             onPlayRequested
               ? "Choose an era to start"
@@ -953,70 +1007,67 @@ export function PlayerBar({
           )}
         </button>
 
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-[#f2e9d8]">
-            {loading
-              ? "Tuning the next signal…"
-              : isPlaying
-                ? awaitingAudio
-                  ? "Cueing the clip…"
-                  : "Listen closely"
-                : (promptTitle ?? "Think you know it?")}
-          </p>
-          <p className="mt-1 text-xs text-[#8e93a3]">
-            {promptSubtitle ?? "Replay as often as you need. A miss unlocks more."}
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-1 bg-[#0b0d14] p-2 rounded border border-[#242a3a] shadow-inner shrink-0 w-[110px]">
-          <div className="flex items-center justify-between text-[6px] font-mono text-[#525a70] px-1 mb-0.5">
-            <span>LEVEL METER</span>
-            <span>VU</span>
+        <div className="min-w-0 border-l border-[#343b51] pl-3 sm:flex sm:items-center sm:gap-3 sm:pl-5">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold leading-4 text-[#f2e9d8] sm:text-sm">
+              {loading
+                ? "Tuning the next signal…"
+                : isPlaying
+                  ? awaitingAudio
+                    ? "Cueing the clip…"
+                    : "Listen closely"
+                  : (promptTitle ?? "Think you know it?")}
+            </p>
+            <p className="mt-1 hidden text-[11px] leading-4 text-[#8e93a3] lg:block">
+              {promptSubtitle ?? "Replay as often as you need. A miss unlocks more."}
+            </p>
           </div>
-          <div className="flex items-center gap-[2px]">
-            <span className="text-[7px] font-mono text-[#525a70] w-2.5">L</span>
-            {Array.from({ length: 8 }).map((_, i) => {
-              const active = vuLevels[0] > i;
-              let color = "bg-[#181c26]";
-              if (active) {
-                if (i < 5) color = "bg-[#22c55e] shadow-[0_0_4px_rgba(34,197,94,0.6)]";
-                else if (i < 7) color = "bg-[#eab308] shadow-[0_0_4px_rgba(234,179,8,0.6)]";
-                else color = "bg-[#ef4444] shadow-[0_0_4px_rgba(239,68,68,0.6)]";
-              }
-              return <span key={i} className={`h-1 w-[7px] rounded-[1px] transition-all duration-75 ${color}`} />;
-            })}
-          </div>
-          <div className="flex items-center gap-[2px]">
-            <span className="text-[7px] font-mono text-[#525a70] w-2.5">R</span>
-            {Array.from({ length: 8 }).map((_, i) => {
-              const active = vuLevels[1] > i;
-              let color = "bg-[#181c26]";
-              if (active) {
-                if (i < 5) color = "bg-[#22c55e] shadow-[0_0_4px_rgba(34,197,94,0.6)]";
-                else if (i < 7) color = "bg-[#eab308] shadow-[0_0_4px_rgba(234,179,8,0.6)]";
-                else color = "bg-[#ef4444] shadow-[0_0_4px_rgba(239,68,68,0.6)]";
-              }
-              return <span key={i} className={`h-1 w-[7px] rounded-[1px] transition-all duration-75 ${color}`} />;
-            })}
+          <div className="mt-2 sm:mt-0">
+            <LevelMeter levels={vuLevels} />
           </div>
         </div>
       </div>
 
-      <ol className="mt-3.5 grid grid-cols-6 gap-1.5 [@media(max-height:820px)]:mt-2.5 sm:mt-5" aria-label="Reveal stages">
+      <ol
+        className="reveal-rail relative mt-4 grid grid-cols-6 [@media(max-height:820px)]:mt-3 sm:mt-5"
+        style={{ "--rail-progress": `${railProgress}%` } as CSSProperties}
+        aria-label="Reveal stages"
+      >
         {ladder.map((milliseconds) => {
           const current = milliseconds === revealMs;
           const unlocked = milliseconds <= revealMs;
+          const unlocking = milliseconds === unlockingMs;
           return (
             <li
               key={milliseconds}
-              className="border-t-2 pt-2 text-center font-mono text-[9px] sm:text-[10px]"
-              style={{
-                borderColor: unlocked ? "var(--signal)" : "#303648",
-                color: unlocked ? "var(--signal)" : "#9da3b6",
-              }}
+              className={`relative flex flex-col items-center pt-5 text-center font-mono text-[8px] sm:text-[9px] ${
+                unlocked ? "text-(--signal)" : "text-[#a0a6b6]"
+              }`}
               aria-current={current ? "step" : undefined}
             >
+              <span
+                className={`absolute top-0 z-10 flex h-[18px] w-[18px] -translate-y-1/2 items-center justify-center rounded-full border-2 bg-[#171b2b] transition-all duration-500 ${
+                  unlocking
+                    ? "stage-unlocking border-(--signal) text-(--signal)"
+                    : current
+                      ? "stage-unlocked border-(--signal) text-(--signal) shadow-[0_0_0_3px_rgba(242,184,75,0.14)]"
+                      : unlocked
+                        ? "border-(--signal) text-(--signal)"
+                        : "border-[#667087] text-[#a0a6b6]"
+                }`}
+                aria-hidden="true"
+              >
+                {unlocked ? (
+                  <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                ) : (
+                  <svg width="8" height="9" viewBox="0 0 8 9" fill="none" stroke="currentColor" strokeWidth="1.2">
+                    <rect x="1.2" y="3.7" width="5.6" height="4.2" rx="1" />
+                    <path d="M2.4 3.7V2.6a1.6 1.6 0 013.2 0v1.1" />
+                  </svg>
+                )}
+              </span>
               {formatDuration(milliseconds).replace(" sec", "s")}
+              {unlocking ? <span className="mt-0.5 text-[7px] uppercase tracking-[0.08em]">Unlocking</span> : null}
             </li>
           );
         })}

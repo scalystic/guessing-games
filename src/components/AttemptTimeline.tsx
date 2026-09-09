@@ -10,75 +10,48 @@ type Props = {
 };
 
 export function AttemptTimeline({ guesses, currentAttempt, maxAttempts }: Props) {
+  const activeAttempt = Math.min(currentAttempt, maxAttempts);
+
   return (
-    <section aria-labelledby="attempts-label">
-      <p id="attempts-label" className="sr-only">
-        Attempts
+    <section className="flex min-w-0 items-center gap-3 sm:gap-5" aria-labelledby="attempts-label">
+      <p
+        id="attempts-label"
+        className="shrink-0 font-mono text-[9px] font-semibold uppercase tracking-[0.18em] text-[#9299ad] sm:text-[10px]"
+      >
+        Attempt <span className="text-[#f2e9d8]">{activeAttempt}</span> of {maxAttempts}
       </p>
-      {/* Caption row is desktop-only: on a phone the numbered slots already
-          say how many are left, and the row cost 23px of the fold. */}
-      <div className="mb-2 hidden items-center justify-between sm:flex">
-        <p aria-hidden="true" className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-(--text-faint)">
-          Attempts
-        </p>
-        <p className="text-xs text-(--text-dim)">
-          {Math.max(0, maxAttempts - guesses.length)} left
-        </p>
-      </div>
-      <ol className="grid grid-cols-6 gap-1.5">
+      <ol className="flex items-center gap-2" aria-label={`${Math.max(0, maxAttempts - guesses.length)} attempts left`}>
         {Array.from({ length: maxAttempts }, (_, i) => {
           const record = guesses[i];
           const isCurrent = !record && i + 1 === currentAttempt;
 
-          let content: string = String(i + 1);
           let label = `Attempt ${i + 1}, unused`;
-          let border = "var(--hairline)";
-          let color = "var(--text-faint)";
-          let background = "transparent";
+          let stateClass = "border-[#677086] bg-[#677086]";
 
           if (record?.pending) {
-            // Claimed the instant the player submitted, before the server has
-            // ruled. Shown as in-flight rather than as a miss — the slot is
-            // certainly spent, but the verdict genuinely isn't known yet.
-            content = "•••";
             label = `Attempt ${i + 1}, submitted`;
-            border = "var(--signal)";
-            color = "var(--text-dim)";
-            background = "color-mix(in srgb, var(--signal) 6%, transparent)";
+            stateClass = "border-(--signal) bg-(--signal) animate-pulse shadow-[0_0_8px_rgba(242,184,75,0.45)]";
           } else if (record?.correct) {
-            content = "OK";
             label = `Attempt ${i + 1}, correct`;
-            border = "var(--success)";
-            color = "var(--success)";
-            background = "color-mix(in srgb, var(--success) 12%, transparent)";
+            stateClass = "border-(--success) bg-(--success) shadow-[0_0_8px_color-mix(in_srgb,var(--success)_55%,transparent)]";
           } else if (record?.skipped) {
-            content = "SKIP";
             label = `Attempt ${i + 1}, skipped`;
-            color = "var(--text)";
-            background = "var(--surface-hover)";
+            stateClass = "border-(--signal) bg-transparent shadow-[inset_0_0_0_2px_#171b2b]";
           } else if (record) {
-            content = "MISS";
             label = `Attempt ${i + 1}, incorrect`;
-            border = "var(--miss)";
-            color = "var(--miss)";
-            background = "color-mix(in srgb, var(--miss) 10%, transparent)";
+            stateClass = "border-(--miss) bg-(--miss)";
           } else if (isCurrent) {
             label = `Attempt ${i + 1}, current`;
-            border = "var(--signal)";
-            color = "var(--text)";
-            background = "color-mix(in srgb, var(--signal) 10%, transparent)";
+            stateClass = "border-(--signal) bg-(--signal) shadow-[0_0_8px_rgba(242,184,75,0.4)]";
           }
 
           return (
             <li
               key={i}
-              className="flex h-9 items-center justify-center rounded-[4px] border font-mono text-[10px] font-semibold transition-colors duration-200 [@media(max-height:820px)]:h-8 sm:text-xs"
-              style={{ borderColor: border, color, background }}
+              className={`h-2 w-2 rounded-full border transition-all duration-300 ${stateClass}`}
               aria-label={label}
               aria-current={isCurrent ? "step" : undefined}
-            >
-              {content}
-            </li>
+            />
           );
         })}
       </ol>

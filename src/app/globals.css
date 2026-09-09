@@ -97,6 +97,38 @@ a {
   animation: reel-turn 1.4s linear infinite;
 }
 
+.reveal-rail::before {
+  background: linear-gradient(
+    to right,
+    var(--signal) 0 var(--rail-progress, 0%),
+    #3c4458 var(--rail-progress, 0%) 100%
+  );
+  content: "";
+  height: 2px;
+  left: calc(100% / 12);
+  position: absolute;
+  right: calc(100% / 12);
+  top: 0;
+}
+
+@keyframes stage-unlock {
+  0% { box-shadow: 0 0 0 0 rgba(242, 184, 75, 0.5); transform: translateY(-50%) scale(0.72); }
+  55% { box-shadow: 0 0 0 8px rgba(242, 184, 75, 0); transform: translateY(-50%) scale(1.22); }
+  100% { box-shadow: 0 0 0 3px rgba(242, 184, 75, 0.14); transform: translateY(-50%) scale(1); }
+}
+
+.stage-unlocked {
+  animation: stage-unlock 0.65s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes stage-unlocking {
+  50% { box-shadow: 0 0 0 6px rgba(242, 184, 75, 0); transform: translateY(-50%) scale(1.12); }
+}
+
+.stage-unlocking {
+  animation: stage-unlocking 0.8s ease-in-out infinite;
+}
+
 @keyframes reel-turn {
   to { transform: rotate(360deg); }
 }

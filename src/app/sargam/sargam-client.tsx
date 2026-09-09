@@ -519,15 +519,15 @@ export default function Sargam({ user, game: config }: { user: CurrentUser; game
             onPlayRequested={awaitingTape ? () => setShowEraDialog(true) : undefined}
             promptTitle={awaitingTape ? "Load a tape to begin" : undefined}
             promptSubtitle={awaitingTape ? "Pick an era and the round starts." : undefined}
+            attemptIndicator={
+              <AttemptTimeline
+                guesses={game.guesses}
+                currentAttempt={game.attemptsUsed + 1}
+                maxAttempts={game.maxAttempts}
+              />
+            }
+            unlockingMs={game.pendingAction === "skip" ? nextRevealMs : null}
           />
-
-          <div className="mt-3.5 [@media(max-height:820px)]:mt-2.5">
-            <AttemptTimeline
-              guesses={game.guesses}
-              currentAttempt={game.attemptsUsed + 1}
-              maxAttempts={game.maxAttempts}
-            />
-          </div>
 
           {game.hint && !resolved ? (
             <div className="mt-4 border-l-2 border-(--signal) bg-(--surface) px-4 py-3 text-sm text-(--text-dim)">

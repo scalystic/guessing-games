@@ -6,6 +6,8 @@ import { JsonLd } from "@/components/JsonLd";
 import { SiteFooter } from "@/components/SiteFooter";
 import { SITE, SITE_URL } from "@/lib/site";
 import { siteGraph } from "@/lib/structured-data";
+import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 
 const instrumentSans = Instrument_Sans({
@@ -140,6 +142,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             page an OAuth reviewer will actually look at. */}
         <SiteFooter />
         <CookieNotice />
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );
