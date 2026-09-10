@@ -107,6 +107,8 @@ export type RunState = {
   gameSlug: string;
   mode: RunMode;
   decadeFilter: DecadeFilter | null;
+  /// "YYYY-MM-DD" on a DAILY run, null otherwise.
+  dayKey: string | null;
   runStatus: RunStatus;
   maxAttempts: number;
   revealLadder: number[];

@@ -92,8 +92,15 @@ export async function GET(request: Request): Promise<Response> {
       }
     }
 
+    // How many players finished today — the share poster prints the viewer's
+    // rank as "#4 of 128", which needs the field size, not just the page.
+    const total = await prisma.leaderboardEntry.count({
+      where: { gameId: game.id, boardType: "DAILY", periodKey: dayKey },
+    });
+
     return jsonOk({
       dayKey,
+      total,
       entries: entries.map((e) => ({
         rank: Number(e.rank),
         playerId: e.player_id,

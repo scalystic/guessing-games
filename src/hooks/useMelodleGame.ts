@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api/client";
 import {
   fetchRevealAudio,
+  fetchRunState,
   fetchStageAudio,
   giveUpRound,
   inlineStageAudio,
@@ -18,13 +19,14 @@ import {
   type DecadeFilter,
   type Reveal,
   type RoundHint,
+  type RunState,
   type RunStatus,
 } from "@/lib/api/runs";
 
 export type { DecadeFilter };
 
 export type { AchievementEntry };
-import { saveStoredRun } from "@/lib/run-storage";
+import { clearStoredRun, loadStoredRun, saveStoredRun } from "@/lib/run-storage";
 
 /// The run loop, driven entirely by the server.
 ///
@@ -350,6 +352,7 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
         runId: started.runId,
         runToken: started.runToken,
         gameSlug,
+        mode,
       });
 
       setRunId(started.runId);
@@ -377,16 +380,155 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
     }
   }, [gameSlug, mode, era, loadAudio, playInlineAudio, releaseAudio, resetRoundView]);
 
-  /// PRACTICE lands on the era picker; DAILY starts immediately (no era choice).
+  /// Rebuild the board from the run the last visit left behind.
+  ///
+  /// This is what stops a refresh from zeroing the stats panel. The run itself
+  /// survives a reload — it is a row with a 180-minute TTL, and its token is in
+  /// localStorage — so score, streak, best streak and the solved counts were
+  /// never actually lost. They were simply never asked for: POST /api/runs
+  /// opened a SECOND run on every load and the client drew that one's totals,
+  /// which are zero by definition. GET /api/runs/[runId] has returned everything
+  /// needed here from the start; nothing called it.
+  ///
+  /// Returns whether the caller should stand down. `false` means there is no run
+  /// to resume and the normal cold-start path should run.
+  const resume = useCallback(async (): Promise<boolean> => {
+    const stored = loadStoredRun(gameSlug, mode);
+    if (!stored) return false;
+
+    const generation = ++generationRef.current;
+    setPhase("starting");
+    setError(null);
+
+    let state: RunState;
+    try {
+      state = await fetchRunState(stored.runId, stored.runToken);
+    } catch {
+      // A 404 (purged run, or a token that no longer matches) is indistinguishable
+      // from a network failure here, and neither is worth surfacing: the player
+      // asked for a game, not for an explanation of the previous one.
+      clearStoredRun(mode);
+      return false;
+    }
+    if (generation !== generationRef.current) return true;
+
+    // The key is scoped by game and mode, but the payload is the authority on
+    // what the run actually is — trust it over the key it was filed under.
+    if (state.gameSlug !== gameSlug || state.mode !== mode) {
+      clearStoredRun(mode);
+      return false;
+    }
+
+    // Yesterday's daily is not today's. It can still be inside its 180-minute
+    // TTL well past midnight, so the day is the thing to check, not the clock.
+    // UTC, matching how the API derives its own dayKey.
+    if (mode === "DAILY" && state.dayKey !== new Date().toISOString().slice(0, 10)) {
+      clearStoredRun(mode);
+      return false;
+    }
+
+    const expired = state.expiresAt !== null && Date.parse(state.expiresAt) <= Date.now();
+    const finished = state.runStatus !== "IN_PROGRESS";
+    // A finished run is still worth restoring in DAILY: the day's board is over
+    // either way, and POST /api/runs answers 409 `already_started` for it, so
+    // dropping it would land the player on an error dialog instead of their own
+    // result. PRACTICE just starts another run, so there is nothing to keep.
+    const usable = finished ? mode === "DAILY" : state.current !== null && !expired;
+    if (!usable) {
+      clearStoredRun(mode);
+      return false;
+    }
+
+    tokenRef.current = stored.runToken;
+    resetRoundView();
+
+    setRunId(state.runId);
+    setRunStatus(state.runStatus);
+    setEraState(state.decadeFilter);
+    setLives(state.livesRemaining);
+
+    // The totals the stats panel reads. All Run columns, all server-owned.
+    setStreak(state.currentStreak);
+    setBestStreak(state.bestStreak);
+    setScore(state.score);
+    setRoundsSolved(state.roundsSolved);
+    setRoundsPlayed(state.roundsSolved + state.roundsFailed);
+    setLevel(state.level);
+    setXpProgress(state.xpProgress);
+    setXpPerLevel(state.xpPerLevel);
+    setRankName(state.rankName);
+    setAchievements(state.achievements);
+
+    // Newest first, the order applyResult builds. `resolvedAt` is what makes the
+    // "3m ago" column true after a reload rather than restarting from "just now".
+    const past = [...state.past].sort((a, b) => b.roundIndex - a.roundIndex);
+    setRoundHistory(
+      past.flatMap((round) =>
+        round.song
+          ? [
+              {
+                song: round.song,
+                solved: round.outcome === "SOLVED",
+                attemptsUsed: round.attemptsUsed,
+                at: round.resolvedAt ? Date.parse(round.resolvedAt) : Date.now(),
+              },
+            ]
+          : [],
+      ),
+    );
+
+    if (state.current) {
+      const current = state.current;
+      setRoundIndex(current.roundIndex);
+      setStage(current.stageReached);
+      setAttemptsUsed(current.attemptsUsed);
+      setHint(current.hint);
+      setGuesses(
+        current.attempts.map((attempt) => ({
+          song: attempt.song,
+          // The payload carries labels for display but not the ids of wrong
+          // guesses — see GuessRecord.puzzleId. The typeahead will offer a song
+          // this round already rejected; the server still refuses it.
+          puzzleId: null,
+          correct: attempt.isCorrect,
+          skipped: attempt.isSkip,
+          at: Date.now(),
+        })),
+      );
+      setYoutubeVideoId(current.youtubeVideoId);
+      setHookStartMs(current.hookStartMs);
+      setPhase("ready");
+
+      if (state.nextAudio) playInlineAudio(state.nextAudio, generation);
+      else if (!current.youtubeVideoId) await loadAudio(state.runId, generation);
+
+      return true;
+    }
+
+    // Finished DAILY: no current round, so the last resolved one is the view.
+    const last = past[0];
+    setRoundIndex(last?.roundIndex ?? 1);
+    setStage(last?.stageReached ?? 1);
+    setAttemptsUsed(last?.attemptsUsed ?? 0);
+    setStatus(last?.outcome ?? "FAILED");
+    setReveal(last?.song ?? null);
+    setLastPoints(last?.points ?? null);
+    setPhase("ready");
+    return true;
+  }, [gameSlug, mode, loadAudio, playInlineAudio, resetRoundView]);
+
+  /// A stored run is resumed wherever there is one. Failing that: PRACTICE lands
+  /// on the era picker, DAILY starts immediately (no era choice).
   /// Runs once on mount.
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
-    if (mode === "DAILY") {
-      void begin();
-    } else {
-      setPhase("selecting");
-    }
+
+    void (async () => {
+      if (await resume()) return;
+      if (mode === "DAILY") await begin();
+      else setPhase("selecting");
+    })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

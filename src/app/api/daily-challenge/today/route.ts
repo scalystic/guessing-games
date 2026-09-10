@@ -22,7 +22,7 @@ export async function GET(request: Request): Promise<Response> {
 
     const game = await prisma.game.findFirst({
       where: { slug: gameSlug, isActive: true },
-      select: { id: true },
+      select: { id: true, maxAttempts: true },
     });
     if (!game) return jsonError(404, "not_found", `No active game "${gameSlug}".`);
 
@@ -60,7 +60,12 @@ export async function GET(request: Request): Promise<Response> {
       select: {
         id: true,
         status: true,
-        rounds: { select: { attemptsUsed: true } },
+        score: true,
+        roundsSolved: true,
+        rounds: {
+          orderBy: { roundIndex: "asc" },
+          select: { attemptsUsed: true, outcome: true },
+        },
       },
     });
 
@@ -79,6 +84,20 @@ export async function GET(request: Request): Promise<Response> {
       rewardXp: challenge.rewardXp,
       alreadyPlayed: hasGuesses,
       runStatus: hasGuesses ? (existingRun?.status ?? null) : null,
+      result:
+        hasGuesses && existingRun?.status === "COMPLETED"
+          ? {
+              score: existingRun.score,
+              roundsSolved: existingRun.roundsSolved,
+              maxAttempts: game.maxAttempts,
+              roundHistory: existingRun.rounds
+                .filter((round) => round.outcome !== "PENDING")
+                .map((round) => ({
+                  solved: round.outcome === "SOLVED",
+                  attemptsUsed: round.attemptsUsed,
+                })),
+            }
+          : null,
     });
   } catch (error) {
     return internalErrorJson("daily-challenge.today", error);

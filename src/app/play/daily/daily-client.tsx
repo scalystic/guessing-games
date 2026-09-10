@@ -20,10 +20,22 @@ import { DailyStreakStrip } from "@/components/DailyStreakStrip";
 import { DailyCalendarModal } from "@/components/DailyCalendarModal";
 import { useDailyHistory } from "@/hooks/useDailyHistory";
 import { RunErrorDialog } from "@/components/RunErrorDialog";
+import { DailySharePoster } from "@/components/DailySharePoster";
 
 function formatSeconds(milliseconds: number) {
   const seconds = milliseconds / 1000;
   return seconds < 1 ? seconds.toFixed(1) : Number.isInteger(seconds) ? seconds : seconds.toFixed(1);
+}
+
+/// One finished round as the /today route reports it. Only used here now, to
+/// count how many songs were named on the first listen.
+type ResultRound = { solved: boolean; attemptsUsed: number };
+
+/// Songs named with nothing unlocked past the opening window — attempt one,
+/// solved. Every miss or skip unlocks more audio, so this is exactly the set
+/// of songs caught in the ladder's first slice.
+function countInstantSolves(rounds: ResultRound[]) {
+  return rounds.filter((round) => round.solved && round.attemptsUsed === 1).length;
 }
 
 type ChallengeInfo = {
@@ -35,6 +47,12 @@ type ChallengeInfo = {
   rewardXp: number;
   alreadyPlayed: boolean;
   runStatus: string | null;
+  result: {
+    score: number;
+    roundsSolved: number;
+    maxAttempts: number;
+    roundHistory: ResultRound[];
+  } | null;
 };
 
 function formatDay(dayKey: string) {
@@ -115,8 +133,22 @@ function PageShell({
   );
 }
 
-function AlreadyPlayedPanel({ info }: { info: ChallengeInfo }) {
+function AlreadyPlayedPanel({ info, firstRevealMs }: { info: ChallengeInfo; firstRevealMs: number }) {
   const completed = info.runStatus === "COMPLETED";
+
+  if (completed && info.result) {
+    return (
+      <ChallengeCompletePanel
+        roundsSolved={info.result.roundsSolved}
+        roundCount={info.roundCount}
+        score={info.result.score}
+        dayKey={info.dayKey}
+        instantSolves={countInstantSolves(info.result.roundHistory)}
+        firstRevealMs={firstRevealMs}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col items-center py-12">
       <div className="w-full max-w-sm rounded-[14px] border border-(--hairline) bg-(--surface-strong) p-6 shadow-xl">
@@ -177,14 +209,40 @@ function ChallengeCompletePanel({
   roundCount,
   score,
   dayKey,
+  instantSolves,
+  firstRevealMs,
 }: {
   roundsSolved: number;
   roundCount: number;
   score: number;
   dayKey: string;
+  instantSolves: number;
+  firstRevealMs: number;
 }) {
+  const [board, setBoard] = useState<{ rank: number | null; total: number | null }>({
+    rank: null,
+    total: null,
+  });
+
+  // The poster prints today's standing, which only exists server-side — and
+  // only once completeRun() has written this player's leaderboard row, which
+  // has happened by the time this panel mounts.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/daily-challenge/leaderboard?dayKey=${encodeURIComponent(dayKey)}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled || !json.data) return;
+        setBoard({ rank: json.data.you?.rank ?? null, total: json.data.total ?? null });
+      })
+      .catch(() => null);
+    return () => {
+      cancelled = true;
+    };
+  }, [dayKey]);
+
   return (
-    <div className="flex flex-col items-center gap-6 py-12 text-center">
+    <div className="flex flex-col items-center gap-6 py-8 text-center sm:py-12">
       <div>
         <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-(--signal)">
           Challenge Complete
@@ -194,16 +252,16 @@ function ChallengeCompletePanel({
         </p>
       </div>
 
-      <div className="flex gap-4">
-        <div className="rounded-2xl border border-(--hairline) bg-(--surface) px-6 py-4 text-center">
-          <p className="text-2xl font-bold text-(--signal)">{roundsSolved}</p>
-          <p className="mt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-(--text-faint)">Solved</p>
-        </div>
-        <div className="rounded-2xl border border-(--hairline) bg-(--surface) px-6 py-4 text-center">
-          <p className="text-2xl font-bold text-(--text)">{score.toLocaleString()}</p>
-          <p className="mt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-(--text-faint)">Score</p>
-        </div>
-      </div>
+      <DailySharePoster
+        dayKey={dayKey}
+        rank={board.rank}
+        totalPlayers={board.total}
+        roundsSolved={roundsSolved}
+        roundCount={roundCount}
+        instantSolves={instantSolves}
+        firstRevealMs={firstRevealMs}
+        score={score}
+      />
 
       <div className="w-full max-w-sm text-left">
         <p className="mb-3 text-center font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-(--text-faint)">
@@ -314,6 +372,8 @@ function DailyGame({
           roundCount={roundCount ?? game.roundsSolved}
           score={game.score}
           dayKey={dayKey}
+          instantSolves={countInstantSolves(game.roundHistory)}
+          firstRevealMs={config.revealLadder[0] ?? 0}
         />
       ) : (
         <section className="py-3 [@media(max-height:820px)]:py-2 sm:py-5" aria-labelledby="mystery-track-title">
@@ -528,7 +588,7 @@ export default function DailyClient({ user, game: config }: { user: CurrentUser;
         onHelp={() => setShowHelp(true)}
         onHelpClose={() => setShowHelp(false)}
       >
-        <AlreadyPlayedPanel info={challengeInfo} />
+        <AlreadyPlayedPanel info={challengeInfo} firstRevealMs={config.revealLadder[0] ?? 0} />
       </PageShell>
     );
   }

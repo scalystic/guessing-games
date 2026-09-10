@@ -899,7 +899,7 @@ export function PlayerBar({
       : (isPlaying ? handleStop : handlePlay));
 
   return (
-    <section className="signal-deck rounded-[18px] p-4 text-[#f2e9d8] [@media(max-height:820px)]:p-3 [@media(max-height:700px)]:p-2 sm:p-6" aria-label="Mystery audio deck">
+    <section className="signal-deck rounded-[18px] p-4 text-[#f2e9d8] [@media(max-height:820px)]:p-3 sm:p-6" aria-label="Mystery audio deck">
       {/* Hidden YouTube iframe — must be in the DOM for the IFrame API to attach */}
       {isYoutube && (
         <div
@@ -932,7 +932,7 @@ export function PlayerBar({
         </div>
       </div>
 
-      <div className="relative mt-3.5 [@media(max-height:820px)]:mt-2 [@media(max-height:700px)]:mt-1.5 [@media(max-height:820px)]:p-2 sm:mt-5 p-3 sm:p-4 rounded-[12px] bg-[#10131e] border border-[#2d3447] shadow-inner overflow-hidden">
+      <div className="relative mt-3.5 [@media(max-height:820px)]:mt-2 [@media(max-height:820px)]:p-2 sm:mt-5 p-3 sm:p-4 rounded-[12px] bg-[#10131e] border border-[#2d3447] shadow-inner overflow-hidden">
         <div className="absolute inset-2 bg-gradient-to-b from-[#2c3347] to-[#1a1e2b] rounded-[8px] border border-[#3e4761] shadow-md z-0 opacity-90" />
         <div className="absolute top-1/2 -translate-y-1/2 left-2 right-2 h-10 bg-gradient-to-r from-[#d99d2f]/10 via-[#3a7ad5]/15 to-[#d99d2f]/10 border-t border-b border-[#3e4761]/30 z-0 pointer-events-none" />
         <div className="relative z-10 grid grid-cols-[42px_1fr_42px] items-center gap-3 rounded-[6px] bg-[#07090f] border border-[#1b1f2d] shadow-[inset_0_2px_8px_rgba(0,0,0,0.8)] px-3 py-3 [@media(max-height:820px)]:py-2 sm:grid-cols-[56px_1fr_56px] sm:gap-5 sm:px-5 sm:py-4 overflow-hidden">
@@ -967,7 +967,7 @@ export function PlayerBar({
 
       {/* Equal outer columns keep the transport control physically centered,
           regardless of how wide the duration or VU meter becomes. */}
-      <div className="mt-3.5 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-t border-[#2d3447] pt-3.5 [@media(max-height:820px)]:mt-2.5 [@media(max-height:700px)]:mt-2 [@media(max-height:820px)]:pt-2.5 [@media(max-height:700px)]:pt-2 sm:mt-5 sm:pt-5">
+      <div className="mt-3.5 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-t border-[#2d3447] pt-3.5 [@media(max-height:820px)]:mt-2.5 [@media(max-height:820px)]:pt-2.5 sm:mt-5 sm:pt-5">
         <div className="min-w-0 pr-3 sm:pr-5">
           <p className="font-[family-name:var(--font-display)] text-[1.65rem] font-semibold leading-none tracking-[-0.035em] text-[#f2e9d8] sm:text-3xl">
             {formatDuration(revealMs)}

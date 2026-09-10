@@ -83,6 +83,10 @@ export async function GET(
         roundsFailed: true,
         expiresAt: true,
         decadeFilter: true,
+        /// Set on DAILY runs only. A resuming client needs it to tell "today's
+        /// board, still open" from "last night's board, finished" — a completed
+        /// daily run is inside its 180-minute TTL for hours after midnight.
+        dayKey: true,
         game: {
           select: {
             slug: true,
@@ -243,6 +247,7 @@ export async function GET(
       gameSlug: run.game.slug,
       mode: run.mode,
       decadeFilter: run.decadeFilter,
+      dayKey: run.dayKey,
       runStatus: run.status,
       maxAttempts: run.game.maxAttempts,
       revealLadder: toLadder(run.game.revealLadder),
