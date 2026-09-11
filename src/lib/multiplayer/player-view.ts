@@ -16,6 +16,10 @@ export type PlayerView = {
   status: RoomPlayerInfo["status"];
   score: number;
   roundsSolved: number;
+  stageOneSolves: number;
+  /// Carried through because it is the board's last tie-break (see
+  /// compareStandings) — the view has to be sortable on its own.
+  seatIndex: number;
 };
 
 const YOU_COLOR = "var(--signal)";
@@ -37,5 +41,7 @@ export function toPlayerView(p: RoomPlayerInfo, myPlayerId: string | null): Play
     status: p.status,
     score: p.score,
     roundsSolved: p.roundsSolved,
+    stageOneSolves: p.stageOneSolves,
+    seatIndex: p.seatIndex,
   };
 }

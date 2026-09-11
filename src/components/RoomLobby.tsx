@@ -74,7 +74,7 @@ export function RoomLobby({ mp, roomCode, onLeave }: Readonly<Props>) {
         id: m.id,
         kind: "msg" as const,
         player: toPlayerView(
-          { playerId: m.playerId || "", displayName: m.displayName || "Unknown", avatarUrl: null, status: "WAITING", seatIndex: 0, score: 0, roundsSolved: 0, isHost: false, isWinner: false },
+          { playerId: m.playerId || "", displayName: m.displayName || "Unknown", avatarUrl: null, status: "WAITING", seatIndex: 0, score: 0, roundsSolved: 0, stageOneSolves: 0, isHost: false, isWinner: false },
           myPlayerId
         ),
         text: m.text,

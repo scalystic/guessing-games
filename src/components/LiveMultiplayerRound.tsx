@@ -8,6 +8,7 @@ import { CoverArt } from "@/components/CoverArt";
 import { PlayerBar } from "@/components/PlayerBar";
 import { ProfileMenu } from "@/components/ProfileMenu";
 import { toPlayerView, type PlayerView } from "@/lib/multiplayer/player-view";
+import { compareStandings, isTiedOnScore } from "@/lib/multiplayer/standings";
 import { previewPoints } from "@/lib/game/scoring/preview";
 import { newIdempotencyKey, type CatalogMatch, type RoundHint } from "@/lib/api/runs";
 import { songSubtitleWithYear, songTitle } from "@/lib/song-label";
@@ -82,7 +83,7 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
   const { phase, room, players, myPlayerId, myRun, roundResults, roundDeadline, finalRankings, roundProgress, chatMessages, sendChat, notifyRoundDone, rematch } = mp;
 
   const views = players.map((p) => toPlayerView(p, myPlayerId));
-  const sortedLeaderboard = [...views].sort((a, b) => b.score - a.score);
+  const sortedLeaderboard = [...views].sort(compareStandings);
 
   const [youtubeVideoId, setYoutubeVideoId] = useState<string | null>(null);
   const [hookStartMs, setHookStartMs] = useState(0);
@@ -300,6 +301,10 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
   const potentialPoints = previewPoints(stageReached, room?.currentRound ?? 1, currentStreak);
   const revealMs = revealLadder[stageReached - 1] ?? revealLadder[0] ?? 0;
   const totalMs = revealLadder[revealLadder.length - 1] ?? 0;
+  /// "0.4s" — the ladder's first rung, read from the game rather than written
+  /// out, because revealLadder is per-game DATA and a retune would otherwise
+  /// leave the tie-break label quietly claiming the wrong clip length.
+  const firstRungLabel = `${((revealLadder[0] ?? 0) / 1000).toFixed(1)}s`;
 
   // The "guessed correctly" / "ran out of attempts" announcements are already
   // in here — the server broadcasts them as real room:chat system messages
@@ -314,7 +319,7 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
       id: m.id,
       kind: "msg" as const,
       player: toPlayerView(
-        { playerId: m.playerId || "", displayName: m.displayName || "Unknown", avatarUrl: null, status: "PLAYING", seatIndex: 0, score: 0, roundsSolved: 0, isHost: false, isWinner: false },
+        { playerId: m.playerId || "", displayName: m.displayName || "Unknown", avatarUrl: null, status: "PLAYING", seatIndex: 0, score: 0, roundsSolved: 0, stageOneSolves: 0, isHost: false, isWinner: false },
         myPlayerId,
       ),
       text: m.text,
@@ -337,7 +342,15 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
                 {r.playerId === myPlayerId ? "You" : r.displayName}
                 {r.isWinner ? " 🏆" : ""}
               </span>
-              <span className="font-mono text-xs text-(--text-dim)">{r.score.toLocaleString()} pts · {r.roundsSolved} solved</span>
+              <span className="font-mono text-xs text-(--text-dim)">
+                {r.score.toLocaleString()} pts · {r.roundsSolved} solved
+                {/* Only on a tie: this is the number that decided the order,
+                    and a player who won on points outright would read it as a
+                    second criterion they were also judged on. */}
+                {isTiedOnScore(r, finalRankings) ? (
+                  <span className="text-(--signal)"> · {r.stageOneSolves} off {firstRungLabel}</span>
+                ) : null}
+              </span>
             </div>
           ))}
         </div>
@@ -574,7 +587,21 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
                         {p.isYou ? "You" : p.name}
                         {p.isYou && <span className="rounded bg-(--signal) px-1.5 py-0.5 font-mono text-[9px] font-bold text-(--signal-ink)">YOU</span>}
                       </span>
-                      <span className="font-mono text-[13.5px] font-bold tabular-nums">{p.score.toLocaleString()}</span>
+                      <span className="flex items-center gap-1.5 font-mono text-[13.5px] font-bold tabular-nums">
+                        {/* Level on points with someone, so the row above or
+                            below is only there because of the tie-break. Say
+                            which number did it — an unexplained order between
+                            two identical scores reads as a bug. */}
+                        {isTiedOnScore(p, sortedLeaderboard) ? (
+                          <span
+                            className="rounded bg-(--signal)/15 px-1.5 py-0.5 text-[9.5px] font-bold text-(--signal)"
+                            title={`Tied on points — ${p.stageOneSolves} solved from the ${firstRungLabel} clip`}
+                          >
+                            ⚡{p.stageOneSolves}
+                          </span>
+                        ) : null}
+                        {p.score.toLocaleString()}
+                      </span>
                     </div>
                   );
                 })}
