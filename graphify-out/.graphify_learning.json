@@ -1,0 +1,64 @@
+{
+  "generated_at": "2026-09-11T10:33:32.232117+00:00",
+  "nodes": {
+    "src_lib_auth_actions_login": {
+      "code_fingerprint": "21d1634987bfd748d27cec0ae0f7665275c9f2a0a8e323fbb71952e7eefaa62d",
+      "label": "login()",
+      "last": "2026-09-11T10:28:17.700655+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-11T10:28:17.700655+00:00",
+          "outcome": "useful",
+          "q": "Lets take user manually entered age only and not from google Do implement it"
+        }
+      ],
+      "score": 0.999915892,
+      "source_file": "src/lib/auth/actions.ts",
+      "status": "tentative",
+      "uses": 1
+    },
+    "src_lib_auth_actions_signup": {
+      "code_fingerprint": "21d1634987bfd748d27cec0ae0f7665275c9f2a0a8e323fbb71952e7eefaa62d",
+      "label": "signup()",
+      "last": "2026-09-11T10:28:17.700655+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-11T10:28:17.700655+00:00",
+          "outcome": "useful",
+          "q": "Lets take user manually entered age only and not from google Do implement it"
+        },
+        {
+          "date": "2026-09-11T10:01:22.367825+00:00",
+          "outcome": "useful",
+          "q": "I also want to take users age when user is logging in. How to do this and also how to get it from google acccount also"
+        }
+      ],
+      "score": 1.999399945,
+      "source_file": "src/lib/auth/actions.ts",
+      "status": "preferred",
+      "uses": 2
+    },
+    "src_lib_auth_validation_signupschema": {
+      "code_fingerprint": "d8bb576fd3a52a6bc07c9b3703365f2d0eb401e4de900a655bcce0f1e858d648",
+      "label": "SignupSchema",
+      "last": "2026-09-11T10:28:17.700655+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-11T10:28:17.700655+00:00",
+          "outcome": "useful",
+          "q": "Lets take user manually entered age only and not from google Do implement it"
+        },
+        {
+          "date": "2026-09-11T10:01:22.367825+00:00",
+          "outcome": "useful",
+          "q": "I also want to take users age when user is logging in. How to do this and also how to get it from google acccount also"
+        }
+      ],
+      "score": 1.999399945,
+      "source_file": "src/lib/auth/validation.ts",
+      "status": "preferred",
+      "uses": 2
+    }
+  },
+  "version": 1
+}

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { createSession } from "@/lib/session";
 import { claimGuestProgress } from "@/lib/auth/merge-guest";
 import { LoginSchema } from "@/lib/auth/validation";
+import { postAuthDestination } from "@/lib/auth/post-auth";
 import { jsonError, jsonOk, internalErrorJson } from "@/lib/api/response";
 
 export async function POST(request: Request): Promise<Response> {
@@ -46,7 +47,11 @@ export async function POST(request: Request): Promise<Response> {
     // Create session
     await createSession(player.id, "USER");
 
-    return jsonOk({ playerId: player.id, guestMerge: merge });
+    return jsonOk({
+      playerId: player.id,
+      guestMerge: merge,
+      next: await postAuthDestination(player.id),
+    });
   } catch (error) {
     return internalErrorJson("auth.login", error);
   }

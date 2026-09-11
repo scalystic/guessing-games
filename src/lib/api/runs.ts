@@ -64,15 +64,6 @@ export type Reveal = {
   releaseYear: number | null;
 };
 
-export type AchievementEntry = {
-  id: string;
-  name: string;
-  desc: string;
-  icon: string;
-  unlocked: boolean;
-  color: string;
-};
-
 export type AttemptResult = {
   outcome: RoundOutcome;
   stageReached: number;
@@ -94,12 +85,9 @@ export type AttemptResult = {
   reveal: Reveal | null;
   hint: RoundHint | null;
 
+  /// This run's running total. Level, rank and badges are lifetime state and
+  /// live behind GET /api/players/stats — see src/lib/game/progression.ts.
   score: number;
-  level: number;
-  xpProgress: number;
-  xpPerLevel: number;
-  rankName: string;
-  achievements: AchievementEntry[];
 };
 
 export type RunState = {
@@ -133,6 +121,10 @@ export type RunState = {
       isSkip: boolean;
       isCorrect: boolean;
       song: { title: string; artist: string } | null;
+      /// What the attempt named, so the typeahead can keep excluding it after a
+      /// reload. Null for a skip, and null on a correct guess (which cannot
+      /// appear on a round that is still current).
+      puzzleId: string | null;
     }[];
     hint: RoundHint | null;
     youtubeVideoId: string | null;
@@ -148,12 +140,6 @@ export type RunState = {
     resolvedAt: string | null;
     song: Reveal | null;
   }[];
-
-  level: number;
-  xpProgress: number;
-  xpPerLevel: number;
-  rankName: string;
-  achievements: AchievementEntry[];
 };
 
 export type CatalogMatch = {

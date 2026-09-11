@@ -2,7 +2,7 @@
 
 import { useActionState, useState, useSyncExternalStore } from "react";
 import { setUsername } from "@/lib/auth/username-action";
-import { normalizeUsername } from "@/lib/auth/username";
+import { sanitizeUsernameInput } from "@/lib/auth/username";
 import { getServerThemeColor, getThemeColor, subscribeThemeColor } from "@/lib/theme-color";
 
 export default function UsernameForm({
@@ -47,7 +47,10 @@ export default function UsernameForm({
         <label htmlFor="username" className="text-sm font-medium text-(--text-dim)">
           Username
         </label>
-        <div className="flex items-center gap-0 rounded-xl border-2 bg-(--surface) px-3.5" style={{ borderColor: `${ACCENT}30` }}>
+        <div
+          className="flex items-center gap-0 rounded-xl border-2 bg-(--surface) px-3.5 transition-colors focus-within:!border-transparent"
+          style={{ borderColor: `${ACCENT}30` }}
+        >
           <span className="shrink-0 font-mono text-sm text-(--text-faint)" aria-hidden="true">@</span>
           <input
             id="username"
@@ -62,14 +65,14 @@ export default function UsernameForm({
             // Normalized as they type, so the field always shows exactly what
             // will be stored — no surprise lowercasing after submit.
             value={value}
-            onChange={(event) => setValue(normalizeUsername(event.target.value))}
+            onChange={(event) => setValue(sanitizeUsernameInput(event.target.value))}
             placeholder="yourname"
             className="w-full bg-transparent py-2.5 font-mono text-sm text-(--text) outline-none placeholder:text-(--text-dim)"
             aria-describedby="username-hint"
           />
         </div>
         <p id="username-hint" className="text-xs text-(--text-faint)">
-          3–20 characters. Lowercase letters, numbers and underscores.
+          3–20 characters. Lowercase letters, numbers and dots only.
         </p>
         {state?.errors?.username && (
           <p className="text-xs" style={{ color: "#c17a6b" }}>

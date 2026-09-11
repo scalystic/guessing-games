@@ -72,8 +72,9 @@ export default function PrivacyPage() {
               <th scope="row">Account data</th>
               <td>
                 Email address, a bcrypt hash of your password (never the
-                password itself), display name, handle, avatar URL, and — if
-                you use Google Sign-In — your Google account identifier.
+                password itself), display name, handle, your self-declared
+                age, avatar URL, and — if you use Google Sign-In — your Google
+                account identifier.
               </td>
               <td>When you register or sign in.</td>
             </tr>
@@ -175,6 +176,11 @@ export default function PrivacyPage() {
               <td>Consent</td>
             </tr>
             <tr>
+              <th scope="row">Recording your self-declared age</th>
+              <td>Self-declared age</td>
+              <td>Consent</td>
+            </tr>
+            <tr>
               <th scope="row">
                 Leaderboards, levels, and daily-challenge standings
               </th>
@@ -229,6 +235,12 @@ export default function PrivacyPage() {
         We never receive your Google password. We use this data only to create
         and sign you into your Cluecade account, and we do not transfer it to
         others except as described in section 5.
+      </p>
+
+      <p>
+        Google does not provide your age to us. You enter it directly into
+        Cluecade during account setup, and we do not request access to your
+        Google birthday or age-range data.
       </p>
 
       <p>
@@ -481,17 +493,17 @@ export default function PrivacyPage() {
       <h2 id="children">11. Children</h2>
 
       <p>
-        Cluecade is intended for users aged 18 and over. We do not knowingly
-        collect the personal data of a child under 18 without verifiable
-        parental consent, and we never track, profile, or serve behavioural
-        advertising to children — both prohibited by Section 9 of the DPDP Act.
+        Cluecade&apos;s age selector accepts ages 5 through 80. Under Section 9 of
+        the DPDP Act, verifiable consent from a parent or lawful guardian is
+        required before a child&apos;s personal data is processed. We never track,
+        profile, or serve behavioural advertising to children.
       </p>
 
       <p>
-        If you are a parent or guardian and believe your child has given us
-        data, email{" "}
+        If you are a parent or guardian who wants to provide consent, or you
+        believe your child has given us data without your consent, email{" "}
         <a href={`mailto:${CONTACTS.privacy}`}>{CONTACTS.privacy}</a> and we
-        will delete the account and its data.
+        will help with consent or delete the account and its data.
       </p>
 
       <h2 id="grievance">12. Complaints</h2>

@@ -36,7 +36,7 @@ export function SiteFooter() {
     // by min-height, so on any page taller than the viewport the default
     // flex-shrink squashes this footer to a fraction of its height and the
     // content above overlaps it.
-    <footer className="shrink-0 border-t border-(--hairline) bg-(--surface) py-6 text-sm text-(--text-dim)">
+    <footer className="shrink-0 border-t border-(--hairline) bg-(--bg) py-6 text-sm text-(--text-dim)">
       {/* Padding goes inside the max-width box, not on the <footer> — the game
           and daily shells are built the same way, and putting it outside
           instead shifts these links a padding-width left of the content they

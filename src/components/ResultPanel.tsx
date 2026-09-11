@@ -1,12 +1,20 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { RoundStatus, RoundHistoryEntry, AchievementEntry } from "@/hooks/useMelodleGame";
+import type { RoundStatus } from "@/hooks/useMelodleGame";
+import { nearestAchievements, type AchievementEntry, type Progression } from "@/lib/game/progression";
 import type { Reveal } from "@/lib/api/runs";
 import { fetchAlbumArtUrl } from "@/lib/album-art";
 import { Confetti } from "@/components/Confetti";
 import { songSubtitleWithYear, songTitle } from "@/lib/song-label";
-import { loadYouTubeAPI, YT_ENDED, YT_PLAYING, type YTPlayerInstance } from "@/lib/youtube";
+import {
+  loadYouTubeAPI,
+  youtubeErrorMessage,
+  YT_CONNECTION_ERROR_MESSAGE,
+  YT_ENDED,
+  YT_PLAYING,
+  type YTPlayerInstance,
+} from "@/lib/youtube";
 
 type Props = {
   reveal: Reveal;
@@ -26,15 +34,15 @@ type Props = {
   audioLoading: boolean;
   onNext: () => void;
   nextLabel?: string;
-  roundsSolved: number;
-  bestStreak: number;
-  roundHistory: RoundHistoryEntry[];
 
-  level: number;
-  xpProgress: number;
-  xpPerLevel: number;
-  rankName: string;
-  achievements: AchievementEntry[];
+  /// LIFETIME rank, level and badges — null while a run is still going.
+  ///
+  /// The rollup behind these is written once, when the run completes, so during
+  /// a run every one of these numbers is the value it had at the first round.
+  /// An XP bar that visibly refuses to move for ten rounds is worse than no XP
+  /// bar, so the callers pass null until the run is over and this block simply
+  /// isn't rendered. Per-round payoff is the points/score/streak row above.
+  progression?: Progression | null;
 };
 
 function formatDuration(ms: number) {
@@ -63,14 +71,7 @@ export function ResultPanel({
   audioLoading,
   onNext,
   nextLabel = "Next track",
-  roundsSolved,
-  bestStreak,
-  roundHistory,
-  level,
-  xpProgress,
-  xpPerLevel,
-  rankName,
-  achievements,
+  progression = null,
 }: Props) {
   const [copied, setCopied] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -78,6 +79,10 @@ export function ResultPanel({
   /// embed takes a moment to load, and a disc that spins in silence reads as a
   /// dead button — the same lie PlayerBar's "Cueing" readout exists to avoid.
   const [cueing, setCueing] = useState(false);
+  /// Why the last press produced no sound, or null. Without it a track that
+  /// cannot play spins for eight seconds and then hands the button back with no
+  /// explanation, which reads as a broken button rather than a broken network.
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const won = status === "SOLVED";
 
@@ -92,6 +97,9 @@ export function ResultPanel({
   /// seek + play, which keeps the buffer instead of paying for a second load.
   const ytLoadedRef = useRef(false);
   const ytWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /// Last reason the embed gave for refusing to play, so a press that times out
+  /// can report what YouTube said instead of a generic connection warning.
+  const ytErrorRef = useRef<string | null>(null);
 
   // Safe to show the real cover here — the title/artist/album are already
   // revealed in plain text below, unlike the live PlayerBar deck.
@@ -106,14 +114,21 @@ export function ResultPanel({
     };
   }, [reveal.title, reveal.artist, reveal.album]);
 
-  const progressPercent = Math.min(100, Math.max(0, (xpProgress / xpPerLevel) * 100));
+  const progressPercent = progression
+    ? Math.min(100, Math.max(0, (progression.xpProgress / progression.xpPerLevel) * 100))
+    : 0;
 
-  const justUnlocked = {
-    first_win: won && roundsSolved === 1,
-    perfect_sync: won && attemptsUsed === 1,
-    streak_master: won && streak === 10,
-    century_score: won && score >= 1000 && (score - (points ?? 0)) < 1000,
-  };
+  /// Four badges to show alongside the rank: the ones closest to unlocking
+  /// first, so the panel ends on "two more days" rather than on a row of
+  /// trophies already won. Unlocked badges backfill the row once there is
+  /// nothing left to chase.
+  ///
+  /// A "New!" flash used to sit on top of this, computed from the current
+  /// round — `roundsSolved === 1`, `attemptsUsed === 1` and so on, against badge
+  /// ids that no longer exist. It cannot be rebuilt honestly here: unlocks are
+  /// lifetime events now and this component only ever sees one snapshot, so
+  /// there is nothing to diff against.
+  const spotlight = progression ? nearestAchievements(progression.achievements, 4) : [];
 
   useEffect(() => {
     if (!fullAudioUrl) {
@@ -174,6 +189,8 @@ export function ResultPanel({
               clearYoutubeWatchdog();
               setCueing(false);
               setIsPlaying(true);
+              ytErrorRef.current = null;
+              setPlaybackError(null);
               return;
             }
             if (event.data === YT_ENDED) {
@@ -183,8 +200,28 @@ export function ResultPanel({
               setIsPlaying(false);
             }
           },
+          onError: (event) => {
+            // YouTube saying outright that this will not play. Worth acting on
+            // immediately rather than waiting out the watchdog, and it carries
+            // a better reason than a timeout can.
+            //
+            // Held, not shown, unless a press is actually in flight: the embed
+            // can report a bad video while the panel is merely standing its
+            // player up, and a warning about a track nobody asked to hear is
+            // just noise on the answer screen.
+            const message = youtubeErrorMessage(event.data);
+            ytErrorRef.current = message;
+            if (ytPendingPlayRef.current) failYoutubeTrack(message);
+          },
         },
       });
+    }, () => {
+      // The IFrame API script never arrived, so the player above will never
+      // exist and the disc would sit there doing nothing on every press.
+      if (cancelled) return;
+      setCueing(false);
+      setIsPlaying(false);
+      setPlaybackError(YT_CONNECTION_ERROR_MESSAGE);
     });
 
     return () => { cancelled = true; };
@@ -217,11 +254,21 @@ export function ResultPanel({
     ytWatchdogRef.current = setTimeout(() => {
       ytWatchdogRef.current = null;
       if (!ytPendingPlayRef.current) return;
-      ytPendingPlayRef.current = false;
-      try { ytPlayerRef.current?.pauseVideo(); } catch { /* unusable player */ }
-      setCueing(false);
-      setIsPlaying(false);
+      failYoutubeTrack(ytErrorRef.current ?? YT_CONNECTION_ERROR_MESSAGE);
     }, YT_START_TIMEOUT_MS);
+  }
+
+  /// Hand the button back and say why nothing is playing.
+  function failYoutubeTrack(message: string) {
+    ytPendingPlayRef.current = false;
+    // The load failed, so the buffer it would have left behind is not there;
+    // send the next press back through loadVideoById rather than seek + play.
+    ytLoadedRef.current = false;
+    clearYoutubeWatchdog();
+    try { ytPlayerRef.current?.pauseVideo(); } catch { /* unusable player */ }
+    setCueing(false);
+    setIsPlaying(false);
+    setPlaybackError(message);
   }
 
   /// From the top, not from the hook: the clip is what they already heard, and
@@ -269,6 +316,7 @@ export function ResultPanel({
       }
       ytPendingPlayRef.current = true;
       setCueing(true);
+      setPlaybackError(null);
       // Not ready yet: onReady above picks the click up.
       if (ytReadyRef.current) startYoutubeTrack();
       else armYoutubeWatchdog();
@@ -286,7 +334,11 @@ export function ResultPanel({
 
     audio.currentTime = 0;
     setIsPlaying(true);
-    void audio.play().catch(() => setIsPlaying(false));
+    setPlaybackError(null);
+    void audio.play().catch(() => {
+      setIsPlaying(false);
+      setPlaybackError("Couldn't play this track. Please check your internet connection and try again.");
+    });
   }
 
   function share() {
@@ -359,9 +411,11 @@ export function ResultPanel({
                 ? "Loading full track"
                 : cueing
                   ? "Cueing full track"
-                  : isPlaying
-                    ? "Stop full track"
-                    : "Play full track"}
+                  : playbackError
+                    ? "Playback failed"
+                    : isPlaying
+                      ? "Stop full track"
+                      : "Play full track"}
             </p>
           </div>
 
@@ -430,6 +484,23 @@ export function ResultPanel({
           </div>
         </div>
 
+        {/* Full card width, not the disc column it belongs to: two sentences in
+            a 132px gutter is eight lines of text and enough extra height to
+            push the card off a short screen. */}
+        {playbackError ? (
+          <p
+            role="alert"
+            className="mx-5 mb-4 rounded-[6px] border px-3 py-2 text-[11px] leading-4 sm:mx-6 sm:mb-5"
+            style={{
+              borderColor: "color-mix(in srgb, var(--miss) 40%, transparent)",
+              backgroundColor: "color-mix(in srgb, var(--miss) 10%, transparent)",
+              color: "var(--miss)",
+            }}
+          >
+            {playbackError}
+          </p>
+        ) : null}
+
         <div className="grid grid-cols-3 border-y border-(--hairline) bg-(--surface)">
           <div className="border-r border-(--hairline) px-3 py-3 text-center">
             <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-(--text-faint)">Points</p>
@@ -445,47 +516,36 @@ export function ResultPanel({
           </div>
         </div>
 
-        {/* Level Progress & Achievements */}
-        <div className="border-b border-(--hairline) bg-(--surface-strong) p-4 sm:p-5">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-1.5">
-              <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-(--text-faint)">Rank</span>
-              <span className="text-xs font-bold text-(--signal)">{rankName}</span>
-            </div>
-            <span className="font-mono text-[10px] text-(--text-dim)">
-              Lv. {level} • <strong className="font-semibold text-(--text)">{xpProgress}</strong> / {xpPerLevel} XP
-            </span>
-          </div>
-          
-          <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-(--surface) border border-(--hairline) mb-4">
-            <div 
-              className="h-full rounded-full bg-gradient-to-r from-(--signal) to-orange-400 transition-all duration-1000 ease-out shadow-[0_0_8px_rgba(242,184,75,0.3)]"
-              style={{ width: `${progressPercent}%` }}
-            />
-          </div>
-
-          <div className="grid grid-cols-4 gap-2">
-            {achievements.map((ach) => (
-              <div
-                key={ach.id}
-                title={`${ach.name}: ${ach.desc}`}
-                className={`relative flex flex-col items-center justify-center p-2 rounded-[8px] border text-center transition-all duration-300 ${
-                  ach.unlocked
-                    ? `bg-gradient-to-b ${ach.color}`
-                    : "bg-transparent border-(--hairline) opacity-25 grayscale"
-                }`}
-              >
-                {justUnlocked[ach.id as keyof typeof justUnlocked] && (
-                  <span className="absolute -top-1.5 -right-1 px-1 py-0.5 font-mono text-[7px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/80 border border-emerald-500/40 rounded-full animate-pulse z-10">
-                    New!
-                  </span>
-                )}
-                <span className="text-lg mb-0.5">{ach.icon}</span>
-                <span className="text-[9px] font-extrabold tracking-tight truncate w-full uppercase font-mono">{ach.name}</span>
+        {/* Lifetime rank and the badges nearest to unlocking. Rendered only
+            once the run is over — see the `progression` prop. */}
+        {progression ? (
+          <div className="border-b border-(--hairline) bg-(--surface-strong) p-4 sm:p-5">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-(--text-faint)">Rank</span>
+                <span className="text-xs font-bold text-(--signal)">{progression.rankName}</span>
               </div>
-            ))}
+              <span className="font-mono text-[10px] text-(--text-dim)">
+                Lv. {progression.level} •{" "}
+                <strong className="font-semibold text-(--text)">{progression.xpProgress}</strong> /{" "}
+                {progression.xpPerLevel} XP
+              </span>
+            </div>
+
+            <div className="relative mb-4 h-2.5 w-full overflow-hidden rounded-full border border-(--hairline) bg-(--surface)">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-(--signal) to-orange-400 shadow-[0_0_8px_rgba(242,184,75,0.3)] transition-all duration-1000 ease-out"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+
+            <div className="grid grid-cols-4 gap-2">
+              {spotlight.map((ach) => (
+                <SpotlightBadge key={ach.id} entry={ach} />
+              ))}
+            </div>
           </div>
-        </div>
+        ) : null}
 
         <div className="grid grid-cols-2 gap-2 p-4 sm:p-5">
           <button
@@ -509,6 +569,39 @@ export function ResultPanel({
       {/* After the card, so the pieces fall in FRONT of it. The panel root is
           fixed, so `absolute inset-0` inside Confetti spans the viewport. */}
       {won ? <Confetti accent="var(--signal)" /> : null}
+    </div>
+  );
+}
+
+/// Compact badge for the result panel. Shows the remaining distance on a locked
+/// badge — the number is the whole point of a long threshold, and a bare grey
+/// icon communicates nothing about how close it is.
+function SpotlightBadge({ entry }: { entry: AchievementEntry }) {
+  const label = entry.unlocked
+    ? `${entry.name}: ${entry.desc} — unlocked`
+    : `${entry.name}: ${entry.desc} — ${entry.progress.toLocaleString()} of ${entry.target.toLocaleString()}`;
+
+  return (
+    <div
+      title={label}
+      aria-label={label}
+      className={`flex flex-col items-center justify-center rounded-[8px] border p-2 text-center transition-all duration-300 ${
+        entry.unlocked
+          ? `bg-gradient-to-b ${entry.color}`
+          : "border-(--hairline) bg-transparent text-(--text-faint)"
+      }`}
+    >
+      <span className={`mb-0.5 text-lg ${entry.unlocked ? "" : "opacity-30 grayscale"}`}>
+        {entry.icon}
+      </span>
+      <span className="w-full truncate font-mono text-[9px] font-extrabold uppercase tracking-tight">
+        {entry.name}
+      </span>
+      {entry.unlocked ? null : (
+        <span className="mt-0.5 font-mono text-[8px] tabular-nums text-(--text-faint)">
+          {entry.progress.toLocaleString()}/{entry.target.toLocaleString()}
+        </span>
+      )}
     </div>
   );
 }

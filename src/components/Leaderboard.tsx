@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Modal } from "@/components/Modal";
 
 type Entry = {
   rank: number;
@@ -11,11 +12,28 @@ type Entry = {
 };
 
 type LeaderboardData = {
+  total: number;
   entries: Entry[];
+  nearby: Entry[];
   you: { rank: number; score: number; displayName: string | null } | null;
 };
 
 const MEDALS = ["🥇", "🥈", "🥉"];
+
+async function fetchLeaderboardPage(
+  dayKey: string,
+  { limit = 10, offset = 0, signal }: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+): Promise<LeaderboardData> {
+  const params = new URLSearchParams({
+    dayKey,
+    limit: String(limit),
+    offset: String(offset),
+  });
+  const response = await fetch(`/api/daily-challenge/leaderboard?${params}`, { signal });
+  const json = await response.json();
+  if (!response.ok || !json.data) throw new Error("Leaderboard request failed");
+  return json.data;
+}
 
 /// `dayKey` scopes the board to one day of the DAILY rotation (see
 /// LeaderboardEntry in schema.prisma). Backed by GET
@@ -23,27 +41,28 @@ const MEDALS = ["🥇", "🥈", "🥉"];
 /// in src/lib/game/attempt.ts — there's nothing to poll here mid-run, only
 /// after this player's own run has completed.
 export function Leaderboard({ dayKey, accent }: { dayKey: string; accent: string }) {
-  const [data, setData] = useState<LeaderboardData | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [result, setResult] = useState<{ dayKey: string; data: LeaderboardData } | null>(null);
+  const [failedDayKey, setFailedDayKey] = useState<string | null>(null);
+  const [showFullLeaderboard, setShowFullLeaderboard] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-    setData(null);
-    setFailed(false);
-    fetch(`/api/daily-challenge/leaderboard?dayKey=${encodeURIComponent(dayKey)}`)
-      .then((r) => r.json())
-      .then((json) => {
-        if (cancelled) return;
-        if (json.data) setData(json.data);
-        else setFailed(true);
+    const controller = new AbortController();
+    fetchLeaderboardPage(dayKey, { signal: controller.signal })
+      .then((leaderboard) => {
+        setResult({ dayKey, data: leaderboard });
+        setFailedDayKey(null);
       })
-      .catch(() => {
-        if (!cancelled) setFailed(true);
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setFailedDayKey(dayKey);
       });
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [dayKey]);
+
+  const data = result?.dayKey === dayKey ? result.data : null;
+  const failed = failedDayKey === dayKey;
 
   if (failed) {
     return (
@@ -63,9 +82,24 @@ export function Leaderboard({ dayKey, accent }: { dayKey: string; accent: string
     );
   }
 
-  const { entries, you } = data;
-  // Only shown separately when the viewer's rank fell outside the loaded page.
-  const showOwnRowBelow = you !== null && !entries.some((e) => e.isYou);
+  const { entries, nearby = [], total, you } = data;
+  const viewerIsInTopTen = entries.some((entry) => entry.isYou);
+  const nearbyEntries = nearby.filter(
+    (nearbyEntry) => !entries.some((entry) => entry.playerId === nearbyEntry.playerId),
+  );
+  // A defensive fallback keeps the viewer visible if an older cached API
+  // response has `you` but not the new nearby window yet.
+  const contextEntries = nearbyEntries.length > 0
+    ? nearbyEntries
+    : you !== null && !viewerIsInTopTen
+      ? [{
+          rank: you.rank,
+          playerId: "you",
+          displayName: you.displayName ?? "Player",
+          score: you.score,
+          isYou: true,
+        }]
+      : [];
 
   if (entries.length === 0) {
     return (
@@ -82,27 +116,107 @@ export function Leaderboard({ dayKey, accent }: { dayKey: string; accent: string
           <LeaderboardRow key={entry.playerId} entry={entry} accent={accent} />
         ))}
       </ul>
-      {showOwnRowBelow && you && (
+      {contextEntries.length > 0 && (
         <>
-          <div className="my-1 border-t border-dashed border-(--hairline)" />
-          <ul>
-            <LeaderboardRow
-              entry={{
-                rank: you.rank,
-                playerId: "you",
-                // Same fallback the board route applies to every other row, so
-                // an unnamed player reads "Player (You)" here and "Player"
-                // to everyone else — not two different labels for one person.
-                displayName: you.displayName ?? "Player",
-                score: you.score,
-                isYou: true,
-              }}
-              accent={accent}
-            />
+          <div className="flex items-center gap-2 py-1" aria-hidden="true">
+            <span className="h-px flex-1 border-t border-dashed border-(--hairline)" />
+            <span className="text-[10px] tracking-[0.2em] text-(--text-faint)">•••</span>
+            <span className="h-px flex-1 border-t border-dashed border-(--hairline)" />
+          </div>
+          <ul className="flex flex-col gap-2" aria-label="Your position on the leaderboard">
+            {contextEntries.map((entry) => (
+              <LeaderboardRow key={entry.playerId} entry={entry} accent={accent} />
+            ))}
           </ul>
         </>
       )}
+      {total > entries.length ? (
+        <button
+          type="button"
+          onClick={() => setShowFullLeaderboard(true)}
+          className="flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-[7px] border border-(--hairline) bg-(--surface) px-4 py-2.5 text-sm font-bold text-(--text) transition-colors duration-200 hover:border-(--text-faint) hover:bg-(--surface-hover) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--signal)"
+        >
+          View full leaderboard
+          <span className="font-mono text-[11px] font-medium text-(--text-faint)">
+            {total.toLocaleString("en-IN")}
+          </span>
+        </button>
+      ) : null}
+      {showFullLeaderboard ? (
+        <FullLeaderboardModal
+          dayKey={dayKey}
+          accent={accent}
+          onClose={() => setShowFullLeaderboard(false)}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function FullLeaderboardModal({
+  dayKey,
+  accent,
+  onClose,
+}: {
+  dayKey: string;
+  accent: string;
+  onClose: () => void;
+}) {
+  const [entries, setEntries] = useState<Entry[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadAllEntries() {
+      try {
+        const allEntries: Entry[] = [];
+        let offset = 0;
+        let total = Number.POSITIVE_INFINITY;
+
+        while (offset < total) {
+          const page = await fetchLeaderboardPage(dayKey, {
+            limit: 100,
+            offset,
+            signal: controller.signal,
+          });
+          allEntries.push(...page.entries);
+          total = page.total;
+          if (page.entries.length === 0) break;
+          offset += page.entries.length;
+        }
+
+        setEntries(allEntries);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setFailed(true);
+      }
+    }
+
+    void loadAllEntries();
+    return () => controller.abort();
+  }, [dayKey]);
+
+  return (
+    <Modal title="Today’s leaderboard" onClose={onClose}>
+      {failed ? (
+        <p className="py-8 text-center text-sm text-(--text-faint)">
+          Couldn&apos;t load the full leaderboard.
+        </p>
+      ) : entries === null ? (
+        <div className="flex flex-col gap-2 py-1" aria-label="Loading full leaderboard">
+          {Array.from({ length: 8 }).map((_, index) => (
+            <div key={index} className="h-12 animate-pulse rounded-xl bg-(--surface)" />
+          ))}
+        </div>
+      ) : (
+        <ul className="flex flex-col gap-2 pr-1" aria-label="Full leaderboard">
+          {entries.map((entry) => (
+            <LeaderboardRow key={entry.playerId} entry={entry} accent={accent} />
+          ))}
+        </ul>
+      )}
+    </Modal>
   );
 }
 

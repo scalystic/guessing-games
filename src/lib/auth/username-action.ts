@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/session";
-import { safeNextPath } from "@/lib/auth/post-auth";
+import { postAuthDestination, safeNextPath } from "@/lib/auth/post-auth";
 import { isUsernameTakenError, validateUsername } from "@/lib/auth/username";
 import type { AuthFormState } from "@/lib/auth/validation";
 
@@ -43,7 +43,7 @@ export async function setUsername(
   // Already claimed — nothing to do, and this form is not the place to change
   // it. Move along rather than reporting an error for a satisfied precondition.
   if (player?.handle) {
-    redirect(next);
+    redirect(await postAuthDestination(session.playerId, next));
   }
 
   try {
@@ -60,5 +60,5 @@ export async function setUsername(
     return { message: "Couldn't save your username. Please try again." };
   }
 
-  redirect(next);
+  redirect(await postAuthDestination(session.playerId, next));
 }

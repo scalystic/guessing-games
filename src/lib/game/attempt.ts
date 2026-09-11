@@ -69,14 +69,6 @@ export type GiveUpInput = {
   idempotencyKeyPrefix: string;
 };
 
-export type AchievementEntry = {
-  id: string;
-  name: string;
-  desc: string;
-  icon: string;
-  unlocked: boolean;
-  color: string;
-};
 
 /// YOUTUBE-ONLY: nothing constructs this any more — `nextAudio` is a permanent
 /// null. The type is retained because it is part of the wire shape.
@@ -143,13 +135,12 @@ export type AttemptResult = {
   /// the target.
   hint: RoundHint | null;
 
-  // Authoritative reward/level/achievements info from backend
+  /// This run's running total. Progression — level, rank, badges — is NOT here:
+  /// it is lifetime state, served by GET /api/players/stats and derived in
+  /// src/lib/game/progression.ts. It used to ride along on every attempt,
+  /// recomputed from this one run, which is what made a player's level reset to
+  /// 1 at the top of every set.
   score: number;
-  level: number;
-  xpProgress: number;
-  xpPerLevel: number;
-  rankName: string;
-  achievements: AchievementEntry[];
 };
 
 export type AttemptError =
@@ -162,91 +153,6 @@ export class AttemptFailure extends Error {
   constructor(public readonly detail: AttemptError) {
     super(detail.kind);
   }
-}
-
-// ---------------------------------------------------------------------------
-// Rewards
-// ---------------------------------------------------------------------------
-
-export type Rewards = {
-  score: number;
-  level: number;
-  xpProgress: number;
-  xpPerLevel: number;
-  rankName: string;
-  achievements: AchievementEntry[];
-};
-
-/// Pure. This used to run `runRound.findMany` on EVERY attempt — a whole round
-/// trip spent re-deriving two numbers the Run row already carries. `roundsSolved`
-/// is a Run column, and "has a 1-attempt solve" is one EXISTS subquery folded
-/// into the locking read, so both arrive for free now.
-export function computeRewards(args: {
-  score: number;
-  bestStreak: number;
-  roundsSolved: number;
-  hasPerfectSync: boolean;
-}): Rewards {
-  const { score, bestStreak, roundsSolved, hasPerfectSync } = args;
-
-  let level = 1;
-  let remainingScore = score;
-  while (remainingScore >= (level + 1) * 500) {
-    remainingScore -= (level + 1) * 500;
-    level++;
-  }
-  const xpProgress = remainingScore;
-  const xpPerLevel = (level + 1) * 500;
-
-  let rankName = "Novice Listener";
-  if (level >= 81) {
-    rankName = "Midnight Legend";
-  } else if (level >= 51) {
-    rankName = "Soundwave Maestro";
-  } else if (level >= 31) {
-    rankName = "Frequency Expert";
-  } else if (level >= 16) {
-    rankName = "Melody Scout";
-  } else if (level >= 6) {
-    rankName = "Signal Catcher";
-  }
-
-  const achievements = [
-    {
-      id: "first_win",
-      name: "First Lock",
-      desc: "Identify your first track",
-      icon: "🏆",
-      unlocked: roundsSolved > 0,
-      color: "from-amber-500/20 to-amber-500/5 text-amber-500 border-amber-500/30",
-    },
-    {
-      id: "perfect_sync",
-      name: "Perfect Sync",
-      desc: "Identify in exactly 1 attempt",
-      icon: "⚡",
-      unlocked: hasPerfectSync,
-      color: "from-sky-500/20 to-blue-500/5 text-sky-500 border-sky-500/30",
-    },
-    {
-      id: "streak_master",
-      name: "Maestro",
-      desc: "Reach a streak of 10 wins",
-      icon: "🔥",
-      unlocked: bestStreak >= 10,
-      color: "from-orange-500/20 to-red-500/5 text-orange-500 border-orange-500/30",
-    },
-    {
-      id: "century_score",
-      name: "Audiophile",
-      desc: "Reach a score of 1,000",
-      icon: "👑",
-      unlocked: score >= 1000,
-      color: "from-purple-500/20 to-indigo-500/5 text-purple-500 border-purple-500/30",
-    },
-  ];
-
-  return { score, level, xpProgress, xpPerLevel, rankName, achievements };
 }
 
 // ---------------------------------------------------------------------------
@@ -718,12 +624,7 @@ async function advanceLadder(
       points: null,
       reveal: null,
       hint,
-      ...computeRewards({
-        score: run.score,
-        bestStreak: run.bestStreak,
-        roundsSolved: run.roundsSolved,
-        hasPerfectSync: run.hasPerfectSync,
-      }),
+      score: run.score,
     },
   };
 }
@@ -901,12 +802,7 @@ async function resolveAndAdvance(
       points,
       reveal,
       hint: null,
-      ...computeRewards({
-        score: run.score + points,
-        bestStreak,
-        roundsSolved: run.roundsSolved + solveInc,
-        hasPerfectSync: run.hasPerfectSync || (solved && attemptIndex === 1),
-      }),
+      score: run.score + points,
     },
   });
 
@@ -1063,12 +959,7 @@ async function resolveAndAdvance(
       points,
       reveal,
       hint: null,
-      ...computeRewards({
-        score: nextRow?.score ?? run.score + points,
-        bestStreak,
-        roundsSolved: run.roundsSolved + solveInc,
-        hasPerfectSync: run.hasPerfectSync || (solved && attemptIndex === 1),
-      }),
+      score: nextRow?.score ?? run.score + points,
     },
   };
 }
@@ -1128,6 +1019,7 @@ async function completeRun(
         "runId"             = EXCLUDED."runId",
         "updatedAt"         = now()
     `;
+    await rollUpPlayerStats(tx, run);
     return;
   }
 
@@ -1146,6 +1038,97 @@ async function completeRun(
         "totalRevealMs"   = "totalRevealMs" + ${revealMs}
     WHERE id = ${run.id}
   `;
+
+  await rollUpPlayerStats(tx, run);
+}
+
+/// Fold the finished run into the player's lifetime totals.
+///
+/// Runs AFTER the Run update above and inside the same transaction, so the
+/// SELECT below reads that statement's own output — score, xpEarned, the solved
+/// and failed counts and bestStreak all arrive post-update without this
+/// function having to re-derive any of them from the deltas its caller was
+/// handed. That is the whole reason it is a second statement rather than
+/// another CTE bolted onto the first: the rollup wants the run's *totals*, and
+/// the totals are exactly what the Run row now holds.
+///
+/// Before this existed PlayerGameStat was written in one place only — the
+/// multiplayer socket server, and only its two multiplayer columns — so every
+/// other column sat at 0 for every player and nothing could be shown back to
+/// them. See src/lib/game/progression.ts for what reads it.
+async function rollUpPlayerStats(tx: Tx, run: RunFacts): Promise<void> {
+  // A DAILY run carries the day it belongs to; PRACTICE and MULTIPLAYER runs
+  // don't, and must leave the daily-streak columns untouched rather than
+  // resetting them. Passed as a nullable text so one statement serves all three
+  // modes.
+  const dayKey = run.mode === "DAILY" ? run.dayKey : null;
+  const previousDayKey = dayKey ? shiftDayKey(dayKey, -1) : null;
+
+  await tx.$executeRaw`
+    INSERT INTO "PlayerGameStat" (
+      id, "playerId", "gameId",
+      "runsPlayed", "roundsPlayed", "roundsSolved",
+      "bestRunScore", "bestDailyScore", "bestRoundStreak",
+      "currentDailyStreak", "longestDailyStreak", "lastPlayedDayKey",
+      xp, "updatedAt"
+    )
+    SELECT
+      ${randomUUID()}, r."playerId", r."gameId",
+      1, r."roundsSolved" + r."roundsFailed", r."roundsSolved",
+      r.score, CASE WHEN ${dayKey}::text IS NULL THEN 0 ELSE r.score END, r."bestStreak",
+      CASE WHEN ${dayKey}::text IS NULL THEN 0 ELSE 1 END,
+      CASE WHEN ${dayKey}::text IS NULL THEN 0 ELSE 1 END,
+      ${dayKey}::text,
+      r."xpEarned", now()
+    FROM "Run" r
+    WHERE r.id = ${run.id}
+    ON CONFLICT ("playerId", "gameId") DO UPDATE SET
+      "runsPlayed"     = "PlayerGameStat"."runsPlayed"   + 1,
+      "roundsPlayed"   = "PlayerGameStat"."roundsPlayed" + EXCLUDED."roundsPlayed",
+      "roundsSolved"   = "PlayerGameStat"."roundsSolved" + EXCLUDED."roundsSolved",
+      xp               = "PlayerGameStat".xp            + EXCLUDED.xp,
+
+      "bestRunScore"    = GREATEST("PlayerGameStat"."bestRunScore",    EXCLUDED."bestRunScore"),
+      "bestDailyScore"  = GREATEST("PlayerGameStat"."bestDailyScore",  EXCLUDED."bestDailyScore"),
+      "bestRoundStreak" = GREATEST("PlayerGameStat"."bestRoundStreak", EXCLUDED."bestRoundStreak"),
+
+      -- Consecutive DAYS, which is the number the whole badge ladder hangs off,
+      -- so it is computed here rather than inferred from run timestamps later.
+      -- Four cases, in order: not a daily run at all; today already counted
+      -- (Run has a unique on (playerId, gameId, dayKey), so this only fires on
+      -- a replayed completion); yesterday was played, so the streak extends;
+      -- anything else is a gap and starts over at 1.
+      "currentDailyStreak" = CASE
+        WHEN ${dayKey}::text IS NULL THEN "PlayerGameStat"."currentDailyStreak"
+        WHEN "PlayerGameStat"."lastPlayedDayKey" = ${dayKey}::text
+          THEN "PlayerGameStat"."currentDailyStreak"
+        WHEN "PlayerGameStat"."lastPlayedDayKey" = ${previousDayKey}::text
+          THEN "PlayerGameStat"."currentDailyStreak" + 1
+        ELSE 1
+      END,
+      "longestDailyStreak" = GREATEST(
+        "PlayerGameStat"."longestDailyStreak",
+        CASE
+          WHEN ${dayKey}::text IS NULL THEN "PlayerGameStat"."longestDailyStreak"
+          WHEN "PlayerGameStat"."lastPlayedDayKey" = ${dayKey}::text
+            THEN "PlayerGameStat"."currentDailyStreak"
+          WHEN "PlayerGameStat"."lastPlayedDayKey" = ${previousDayKey}::text
+            THEN "PlayerGameStat"."currentDailyStreak" + 1
+          ELSE 1
+        END
+      ),
+      "lastPlayedDayKey" = COALESCE(${dayKey}::text, "PlayerGameStat"."lastPlayedDayKey"),
+
+      "updatedAt" = now()
+  `;
+}
+
+/// UTC day arithmetic on a "YYYY-MM-DD" key. Same definition the daily history
+/// route uses — the day key IS a UTC date, so shifting it through Date.UTC is
+/// the only form that doesn't drift for players east or west of UTC.
+function shiftDayKey(dayKey: string, deltaDays: number): string {
+  const [y, m, d] = dayKey.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + deltaDays)).toISOString().slice(0, 10);
 }
 
 // ---------------------------------------------------------------------------
@@ -1348,12 +1331,7 @@ async function replay(tx: Tx, runId: string): Promise<TxResult> {
               attemptsUsed,
             )
           : null,
-      ...computeRewards({
-        score: row.score,
-        bestStreak: row.best_streak,
-        roundsSolved: row.rounds_solved,
-        hasPerfectSync: row.has_perfect_sync,
-      }),
+      score: row.score,
     },
   };
 }

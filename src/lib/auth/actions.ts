@@ -27,6 +27,7 @@ export async function signup(
   const parsed = SignupSchema.safeParse({
     displayName: formData.get("displayName"),
     username: formData.get("username"),
+    age: formData.get("age"),
     email: formData.get("email"),
     password: formData.get("password"),
   });
@@ -35,7 +36,7 @@ export async function signup(
     return { errors: parsed.error.flatten().fieldErrors };
   }
 
-  const { displayName, username, email, password } = parsed.data;
+  const { displayName, username, age, email, password } = parsed.data;
 
   // Shape and reserved-word checks passed above; this catches the reserved
   // list, which the schema alone doesn't cover.
@@ -79,6 +80,7 @@ export async function signup(
             kind: "USER",
             displayName,
             handle: username,
+            declaredAge: age,
             email,
             passwordHash,
             // For self-managed auth, authUserId == player id.
@@ -123,6 +125,7 @@ export async function signup(
           kind: "USER",
           displayName,
           handle: username,
+          declaredAge: age,
           email,
           passwordHash,
           authUserId: undefined, // set after creation
@@ -151,8 +154,8 @@ export async function signup(
     return { message: "Something went wrong. Please try again." };
   }
 
-  // Signup collected a username in the form, so this lands on `next` rather
-  // than the username gate.
+  // Signup collected both required onboarding fields in the form, so this
+  // lands on `next` rather than either post-auth gate.
   redirect(safeNextPath(formData.get("next")?.toString()));
 }
 

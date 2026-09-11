@@ -38,6 +38,9 @@ declare global {
           events?: {
             onReady?: () => void;
             onStateChange?: (event: { data: number }) => void;
+            /// Playback failed outright: `data` is a YT.PlayerError code. The
+            /// decks surface this to the player — see youtubeErrorMessage.
+            onError?: (event: { data: number }) => void;
           };
         },
       ) => YTPlayerInstance;
@@ -51,27 +54,105 @@ declare global {
 export const YT_ENDED = 0;
 export const YT_PLAYING = 1;
 
-let ytApiLoaded = false;
-let ytApiReady = false;
-const ytReadyCallbacks: (() => void)[] = [];
+/// YT.PlayerError codes. 100/101/150 are the video's own problem — deleted,
+/// private, or embedding switched off by the uploader — and telling somebody to
+/// check their connection over one of those sends them to fix the wrong thing.
+/// Everything else (2 bad parameter, 5 HTML5 player failure) reaches the player
+/// as a load failure, which is what a blocked or offline YouTube looks like.
+const YT_ERROR_NOT_FOUND = 100;
+const YT_ERROR_NOT_EMBEDDABLE = 101;
+const YT_ERROR_NOT_EMBEDDABLE_ALT = 150;
 
-/// Run `onReady` once the IFrame API is usable, injecting the script on the
-/// first call and queueing every caller that arrives before it lands.
-export function loadYouTubeAPI(onReady: () => void): void {
+/// Shown whenever a clip fails to start and the cause is, as far as the browser
+/// can tell, on the way TO YouTube: the API script never loaded, the embed never
+/// produced audio, the player reported a generic failure.
+export const YT_CONNECTION_ERROR_MESSAGE =
+  "Couldn't play this track. Please check your internet connection and make sure YouTube is accessible, then try again.";
+
+/// Shown when YouTube answered and the answer was "not this video".
+export const YT_UNAVAILABLE_ERROR_MESSAGE =
+  "This track can't be played from YouTube right now. Try another round, or check your internet connection if this keeps happening.";
+
+export function youtubeErrorMessage(code: number): string {
+  return code === YT_ERROR_NOT_FOUND ||
+    code === YT_ERROR_NOT_EMBEDDABLE ||
+    code === YT_ERROR_NOT_EMBEDDABLE_ALT
+    ? YT_UNAVAILABLE_ERROR_MESSAGE
+    : YT_CONNECTION_ERROR_MESSAGE;
+}
+
+/// How long to give the API script before calling it dead.
+///
+/// `onerror` catches a refused or failed request, but a network that black-holes
+/// the connection — the usual shape of a corporate block, and of a laptop that
+/// has "connected" to a captive portal — never fires an event at all. Without
+/// this the queued callbacks simply sit there forever and every deck on the page
+/// stays stuck on its initial state with no way to say why.
+const YT_API_TIMEOUT_MS = 12_000;
+
+let ytApiLoading = false;
+let ytApiReady = false;
+let ytApiFailed = false;
+const ytReadyCallbacks: (() => void)[] = [];
+const ytFailureCallbacks: (() => void)[] = [];
+
+function flushYouTubeFailure() {
+  if (ytApiReady || ytApiFailed) return;
+  ytApiFailed = true;
+  ytApiLoading = false;
+  // Nothing is ever going to call these.
+  ytReadyCallbacks.length = 0;
+  const callbacks = ytFailureCallbacks.splice(0);
+  for (const cb of callbacks) cb();
+}
+
+/// Has a load of the IFrame API already been tried and failed? Lets a click
+/// handler answer straight away rather than arming a watchdog to rediscover
+/// something the page already knows.
+export function isYouTubeAPIBlocked(): boolean {
+  return ytApiFailed;
+}
+
+/**
+ * Run `onReady` once the IFrame API is usable, injecting the script on the
+ * first call and queueing every caller that arrives before it lands.
+ *
+ * `onFailure` runs instead if the script cannot be fetched — YouTube blocked on
+ * the network, an extension eating the request, no connection at all. A caller
+ * that passes it gets to say so; one that doesn't behaves exactly as before.
+ *
+ * A call made AFTER a failure starts a fresh attempt rather than replaying the
+ * old verdict: the usual way this is reached is somebody reconnecting and
+ * pressing play again, and the retry costs one script tag.
+ */
+export function loadYouTubeAPI(onReady: () => void, onFailure?: () => void): void {
   if (ytApiReady) { onReady(); return; }
+
   ytReadyCallbacks.push(onReady);
-  if (ytApiLoaded) return;
-  ytApiLoaded = true;
+  if (onFailure) ytFailureCallbacks.push(onFailure);
+
+  if (ytApiLoading) return;
+  ytApiFailed = false;
+  ytApiLoading = true;
 
   const prev = window.onYouTubeIframeAPIReady;
+  const timer = setTimeout(flushYouTubeFailure, YT_API_TIMEOUT_MS);
+
   window.onYouTubeIframeAPIReady = () => {
     prev?.();
+    clearTimeout(timer);
     ytApiReady = true;
-    for (const cb of ytReadyCallbacks) cb();
-    ytReadyCallbacks.length = 0;
+    ytApiLoading = false;
+    ytFailureCallbacks.length = 0;
+    const callbacks = ytReadyCallbacks.splice(0);
+    for (const cb of callbacks) cb();
   };
 
   const tag = document.createElement("script");
   tag.src = "https://www.youtube.com/iframe_api";
+  tag.onerror = () => {
+    clearTimeout(timer);
+    flushYouTubeFailure();
+  };
   document.head.appendChild(tag);
 }

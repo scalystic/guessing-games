@@ -75,7 +75,7 @@ export const GENERAL_RESPONSE_TARGET = "3 working days";
 /// Shown on every legal page. Bump this — and say what changed in the page's
 /// own "Changes" section — whenever the substance changes, not when a typo is
 /// fixed. Users are told they'll be notified of material changes.
-export const LAST_UPDATED = "1 September 2026";
+export const LAST_UPDATED = "11 September 2026";
 export const EFFECTIVE_FROM = "1 September 2026";
 
 export type LegalPage = {

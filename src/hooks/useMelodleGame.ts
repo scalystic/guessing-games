@@ -12,7 +12,6 @@ import {
   skipRound,
   startRun,
   submitGuess,
-  type AchievementEntry,
   type AttemptResult,
   type CatalogMatch,
   type InlineAudio,
@@ -24,8 +23,6 @@ import {
 } from "@/lib/api/runs";
 
 export type { DecadeFilter };
-
-export type { AchievementEntry };
 import { clearStoredRun, loadStoredRun, saveStoredRun } from "@/lib/run-storage";
 
 /// The run loop, driven entirely by the server.
@@ -49,8 +46,9 @@ export type GuessRecord = {
   /// What the player named. Null for a skip.
   song: { title: string; artist: string } | null;
   /// The puzzle they named, so the typeahead can stop offering it. Null for a
-  /// skip, and null for guesses recovered from a resume — the resume payload
-  /// carries labels for display but not the ids of wrong guesses.
+  /// skip. Survives a resume — GET /api/runs/[runId] returns the id behind each
+  /// wrong guess on the open round, because nothing server-side refuses a
+  /// repeat and a re-offered miss would quietly spend an attempt.
   puzzleId: string | null;
   correct: boolean;
   skipped: boolean;
@@ -139,12 +137,10 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
   const [roundsSolved, setRoundsSolved] = useState(0);
   const [roundHistory, setRoundHistory] = useState<RoundHistoryEntry[]>([]);
 
-  // Backend rewards/levels
-  const [level, setLevel] = useState(1);
-  const [xpProgress, setXpProgress] = useState(0);
-  const [xpPerLevel, setXpPerLevel] = useState(500);
-  const [rankName, setRankName] = useState("Novice Listener");
-  const [achievements, setAchievements] = useState<AchievementEntry[]>([]);
+  // Level, rank and achievements used to be held here too, recomputed from the
+  // current run on every attempt — which is why they reset at the top of every
+  // set. They are lifetime state now: usePlayerStats reads them from
+  // GET /api/players/stats.
 
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioLoading, setAudioLoading] = useState(false);
@@ -427,13 +423,26 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
       return false;
     }
 
+    // Only PRACTICE may be dropped for age, and only because dropping it there
+    // costs nothing — the next POST /api/runs just deals a fresh run.
+    //
+    // In DAILY the same rule was a lockout. `expiresAt` is advisory: no route
+    // checks it, nothing ever writes status EXPIRED, so /guess, /skip and
+    // /giveup all keep working on a run whose TTL has passed. Treating it as
+    // fatal here therefore threw away a run the SERVER was still happy to
+    // continue — and since a daily with guesses on it answers 409
+    // `already_started`, the cold start that followed could only fail, leaving
+    // the player on the error dialog with a Retry that re-fails forever and
+    // today's board unplayable. Sitting on the page for three hours (or a clock
+    // running slightly fast) was enough to trigger it.
     const expired = state.expiresAt !== null && Date.parse(state.expiresAt) <= Date.now();
+    const tooOld = mode === "PRACTICE" && expired;
     const finished = state.runStatus !== "IN_PROGRESS";
     // A finished run is still worth restoring in DAILY: the day's board is over
     // either way, and POST /api/runs answers 409 `already_started` for it, so
     // dropping it would land the player on an error dialog instead of their own
     // result. PRACTICE just starts another run, so there is nothing to keep.
-    const usable = finished ? mode === "DAILY" : state.current !== null && !expired;
+    const usable = finished ? mode === "DAILY" : state.current !== null && !tooOld;
     if (!usable) {
       clearStoredRun(mode);
       return false;
@@ -453,11 +462,6 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
     setScore(state.score);
     setRoundsSolved(state.roundsSolved);
     setRoundsPlayed(state.roundsSolved + state.roundsFailed);
-    setLevel(state.level);
-    setXpProgress(state.xpProgress);
-    setXpPerLevel(state.xpPerLevel);
-    setRankName(state.rankName);
-    setAchievements(state.achievements);
 
     // Newest first, the order applyResult builds. `resolvedAt` is what makes the
     // "3m ago" column true after a reload rather than restarting from "just now".
@@ -486,10 +490,14 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
       setGuesses(
         current.attempts.map((attempt) => ({
           song: attempt.song,
-          // The payload carries labels for display but not the ids of wrong
-          // guesses — see GuessRecord.puzzleId. The typeahead will offer a song
-          // this round already rejected; the server still refuses it.
-          puzzleId: null,
+          // Carried through, not dropped. This used to be a hard `null`, on the
+          // belief that the server refuses a repeat guess anyway — it does not.
+          // Nothing in the attempt path rejects a puzzle this round has already
+          // named, so an empty exclusion set let the typeahead re-offer a song
+          // that had already missed and the repeat spent a real attempt. On a
+          // ranked one-run-a-day board that made a mid-round refresh cost a
+          // guess, which is the one thing a resume must never do.
+          puzzleId: attempt.puzzleId,
           correct: attempt.isCorrect,
           skipped: attempt.isSkip,
           at: Date.now(),
@@ -556,11 +564,6 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
       setStreak(result.currentStreak);
       setBestStreak(result.bestStreak);
       if (result.score !== undefined) setScore(result.score);
-      if (result.level !== undefined) setLevel(result.level);
-      if (result.xpProgress !== undefined) setXpProgress(result.xpProgress);
-      if (result.xpPerLevel !== undefined) setXpPerLevel(result.xpPerLevel);
-      if (result.rankName !== undefined) setRankName(result.rankName);
-      if (result.achievements !== undefined) setAchievements(result.achievements);
 
       if (result.outcome === "PENDING") {
         // Keep YouTube state in sync for ongoing rounds.
@@ -878,12 +881,6 @@ export function useMelodleGame({ gameSlug, revealLadder, maxAttempts, mode = "PR
     roundsPlayed,
     roundsSolved,
     roundHistory,
-
-    level,
-    xpProgress,
-    xpPerLevel,
-    rankName,
-    achievements,
 
     audioUrl,
     audioLoading,

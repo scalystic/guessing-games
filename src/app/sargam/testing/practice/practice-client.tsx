@@ -17,6 +17,7 @@ import { StreakPill } from "@/components/StreakPill";
 import { HowToPlayList } from "@/components/HowToPlayList";
 import { Modal } from "@/components/Modal";
 import { StatsList } from "@/components/StatsList";
+import { usePlayerStats } from "@/hooks/usePlayerStats";
 import { RoundHistoryList } from "@/components/RoundHistoryList";
 import { MultiplayerEntry } from "@/components/MultiplayerEntry";
 import { RunErrorDialog } from "@/components/RunErrorDialog";
@@ -381,6 +382,10 @@ export default function Practice({ user, game: config }: { user: CurrentUser; ga
     revealLadder: config.revealLadder,
     maxAttempts: config.maxAttempts,
   });
+  // Lifetime, not this session — the same panel the daily screen shows, so the
+  // two can't report different levels for the same player. Keyed on runStatus
+  // so finishing a run refetches the totals it just moved.
+  const playerStats = usePlayerStats(config.slug, game.runStatus);
   const now = useNow();
 
   const isGuest = !user || user.kind === "GUEST";
@@ -601,14 +606,11 @@ export default function Practice({ user, game: config }: { user: CurrentUser; ga
               youtubeVideoId={game.youtubeVideoId}
               audioLoading={game.revealAudioLoading}
               onNext={handleNextRound}
-              roundsSolved={game.roundsSolved}
-              bestStreak={game.bestStreak}
-              roundHistory={game.roundHistory}
-              level={game.level}
-              xpProgress={game.xpProgress}
-              xpPerLevel={game.xpPerLevel}
-              rankName={game.rankName}
-              achievements={game.achievements}
+              // Only once the run is over: the lifetime rollup is written at
+              // completion, so mid-run this would be a bar that never moves.
+              progression={
+                game.runStatus === "COMPLETED" ? (playerStats?.progression ?? null) : null
+              }
             />
           ) : null}
         </section>
@@ -628,20 +630,16 @@ export default function Practice({ user, game: config }: { user: CurrentUser; ga
       ) : null}
 
       {showStats ? (
-        <Modal title="Your session" onClose={() => setShowStats(false)}>
-          <StatsList
-            streak={game.streak}
-            bestStreak={game.bestStreak}
-            score={game.score}
-            roundsPlayed={game.roundsPlayed}
-            roundsSolved={game.roundsSolved}
-            roundHistory={game.roundHistory}
-            level={game.level}
-            xpProgress={game.xpProgress}
-            xpPerLevel={game.xpPerLevel}
-            rankName={game.rankName}
-            achievements={game.achievements}
-          />
+        <Modal title="Your stats" onClose={() => setShowStats(false)}>
+          {playerStats ? (
+            <StatsList
+              stats={playerStats.stats}
+              progression={playerStats.progression}
+              hasPlayed={playerStats.hasPlayed}
+            />
+          ) : (
+            <p className="py-6 text-center text-sm text-(--text-faint)">Loading…</p>
+          )}
         </Modal>
       ) : null}
 

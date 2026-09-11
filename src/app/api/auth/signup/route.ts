@@ -20,7 +20,7 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
 
-    const { displayName, email, password } = parsed.data;
+    const { displayName, age, email, password } = parsed.data;
 
     // Check email uniqueness
     const existing = await prisma.player.findUnique({
@@ -49,6 +49,7 @@ export async function POST(request: Request): Promise<Response> {
           data: {
             kind: "USER",
             displayName,
+            declaredAge: age,
             email,
             passwordHash,
             authUserId: guestPlayerId,
@@ -88,6 +89,7 @@ export async function POST(request: Request): Promise<Response> {
         data: {
           kind: "USER",
           displayName,
+          declaredAge: age,
           email,
           passwordHash,
         },

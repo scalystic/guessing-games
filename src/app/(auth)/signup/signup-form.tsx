@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useActionState, useState, useSyncExternalStore } from "react";
 import { signup } from "@/lib/auth/actions";
-import { normalizeUsername } from "@/lib/auth/username";
+import { sanitizeUsernameInput } from "@/lib/auth/username";
+import AgeSlider from "@/app/components/auth/age-slider";
 import GoogleButton from "@/app/components/auth/google-button";
 import { getServerThemeColor, getThemeColor, subscribeThemeColor } from "@/lib/theme-color";
 
@@ -73,6 +74,10 @@ export default function SignupForm({ next }: { next: string }) {
         )}
       </div>
 
+      {/* Self-declared age — Google users enter the same field in the shared
+          post-auth age gate because Google is deliberately not asked for it. */}
+      <AgeSlider id="signup-age" accent={ACCENT} error={state?.errors?.age?.[0]} />
+
       {/* Username — the public, unique one. Separate field from the display
           name above: that one is free text and may repeat, this one is the
           identity the leaderboard prints and cannot collide. */}
@@ -81,7 +86,7 @@ export default function SignupForm({ next }: { next: string }) {
           Username
         </label>
         <div
-          className="flex items-center rounded-xl border-2 bg-(--surface) px-3.5"
+          className="flex items-center rounded-xl border-2 bg-(--surface) px-3.5 transition-colors focus-within:!border-transparent"
           style={{ borderColor: `${ACCENT}30` }}
         >
           <span className="shrink-0 font-mono text-sm text-(--text-dim)" aria-hidden="true">@</span>
@@ -96,7 +101,7 @@ export default function SignupForm({ next }: { next: string }) {
             maxLength={20}
             value={username}
             // Normalized live, so the box always shows what gets stored.
-            onChange={(event) => setUsername(normalizeUsername(event.target.value))}
+            onChange={(event) => setUsername(sanitizeUsernameInput(event.target.value))}
             placeholder="yourname"
             className="w-full bg-transparent py-2.5 font-mono text-sm text-(--text) outline-none placeholder:text-(--text-dim)"
             aria-describedby="signup-username-hint"
@@ -104,7 +109,7 @@ export default function SignupForm({ next }: { next: string }) {
         </div>
         <p id="signup-username-hint" className="text-xs text-(--text-faint)">
           Public and unique — this is your name on the leaderboard. 3–20
-          characters, lowercase letters, numbers and underscores.
+          characters, lowercase letters, numbers and dots only.
         </p>
         {state?.errors?.username && (
           <p className="text-xs" style={{ color: "#c17a6b" }}>

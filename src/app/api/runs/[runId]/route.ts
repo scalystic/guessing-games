@@ -3,7 +3,6 @@ import { internalErrorJson, jsonError, jsonOk } from "@/lib/api/response";
 import { readRunToken, runTokenMatches } from "@/lib/game/run-token";
 import { deriveHint, type RoundHint } from "@/lib/game/hint";
 // YOUTUBE-ONLY: `inlineAudioFor` is retired along with the stored-clip path.
-import { computeRewards } from "@/lib/game/attempt";
 
 /// GET /api/runs/[runId] — the state of a run, for resume.
 ///
@@ -49,6 +48,16 @@ type CurrentRound = {
     isSkip: boolean;
     isCorrect: boolean;
     song: { title: string; artist: string } | null;
+    /// The puzzle this attempt named, so a resumed typeahead can stop offering a
+    /// song this round has already rejected. Null for a skip.
+    ///
+    /// Safe to disclose even though the round is PENDING, and it is NOT a hole
+    /// in the no-puzzleId rule: every id here belongs to a guess the player
+    /// typed themselves and the server already ruled wrong — a correct one
+    /// would have resolved the round, so it could not be the current one. The
+    /// `isCorrect` guard below keeps that true by construction rather than by
+    /// reasoning.
+    puzzleId: string | null;
   }[];
   hint: RoundHint | null;
   youtubeVideoId: string | null;
@@ -200,6 +209,7 @@ export async function GET(
               isSkip: guess.isSkip,
               isCorrect: guess.isCorrect,
               song: song ? { title: song.title, artist: song.artist } : null,
+              puzzleId: guess.isCorrect ? null : guess.guessedPuzzleId,
             };
           }),
           hint: currentRound.puzzle.song
@@ -230,17 +240,6 @@ export async function GET(
             }
           : null,
       }));
-
-    // Pure now, and derived from rows this handler already holds — it used to be
-    // an extra query for two numbers that were sitting right here.
-    const rewards = computeRewards({
-      score: run.score,
-      bestStreak: run.bestStreak,
-      roundsSolved: run.roundsSolved,
-      hasPerfectSync: rounds.some(
-        (round) => round.outcome === "SOLVED" && round.attemptsUsed === 1,
-      ),
-    });
 
     return jsonOk({
       runId,
@@ -279,7 +278,9 @@ export async function GET(
       nextAudio: null,
       current,
       past,
-      ...rewards,
+      // Progression used to be spread in here, recomputed from this one run.
+      // It is lifetime state now — see GET /api/players/stats.
+      score: run.score,
     });
   } catch (error) {
     return internalErrorJson("runs.get", error);

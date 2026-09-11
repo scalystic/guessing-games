@@ -37,6 +37,7 @@
     "detect:covers": "tsx scripts/detect-covers.ts",
     "fix:catalog": "tsx scripts/apply-corrections.ts",
     "backfill:search-text": "tsx scripts/backfill-search-text.ts",
+    "backfill:player-stats": "tsx scripts/backfill-player-stats.ts",
     "report:variants": "tsx scripts/report-variants.ts",
     "purge:catalog": "tsx scripts/purge-catalog.ts",
     "purge:storage": "tsx scripts/purge-storage.ts",

@@ -14,6 +14,8 @@ import { GameMenu } from "@/components/GameMenu";
 import { StreakPill } from "@/components/StreakPill";
 import { Modal } from "@/components/Modal";
 import { HowToPlayList } from "@/components/HowToPlayList";
+import { StatsList } from "@/components/StatsList";
+import { usePlayerStats } from "@/hooks/usePlayerStats";
 import { Leaderboard } from "@/components/Leaderboard";
 import { DailyStreakStrip } from "@/components/DailyStreakStrip";
 import { DailyCalendarModal } from "@/components/DailyCalendarModal";
@@ -103,7 +105,12 @@ function PageShell({
   children: React.ReactNode;
 }) {
   const history = useDailyHistory(config.slug, runCompleted);
+  // Same refetch trigger as the history above: finishing today's run is exactly
+  // when the lifetime rollup moves, and the panel is most likely to be opened
+  // right after it.
+  const playerStats = usePlayerStats(config.slug, runCompleted);
   const [showCalendar, setShowCalendar] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [showMultiplayer, setShowMultiplayer] = useState(false);
 
   // min-h-full, not min-h-screen — same reason as the Sargam shell: the root
@@ -133,6 +140,12 @@ function PageShell({
                 disabled: true,
               },
               {
+                icon: "stats",
+                label: "Stats",
+                hint: "Streaks, rank and badges",
+                onClick: () => setShowStats(true),
+              },
+              {
                 icon: "calendar",
                 label: "Daily calendar",
                 hint: "Every day you've played",
@@ -155,6 +168,20 @@ function PageShell({
       {showHelp && (
         <Modal title="How to play" onClose={onHelpClose}>
           <HowToPlayList maxAttempts={config.maxAttempts} />
+        </Modal>
+      )}
+
+      {showStats && (
+        <Modal title="Your stats" onClose={() => setShowStats(false)}>
+          {playerStats ? (
+            <StatsList
+              stats={playerStats.stats}
+              progression={playerStats.progression}
+              hasPlayed={playerStats.hasPlayed}
+            />
+          ) : (
+            <p className="py-6 text-center text-sm text-(--text-faint)">Loading…</p>
+          )}
         </Modal>
       )}
 
@@ -374,6 +401,12 @@ function DailyGame({
     mode: "DAILY",
   });
 
+  // Its own fetch rather than one threaded down from PageShell: the rollup is
+  // written when the run completes, and runStatus is the value that changes at
+  // exactly that moment, so keying on it here is what makes the end-of-run
+  // panel show numbers that have actually moved.
+  const playerStats = usePlayerStats(config.slug, game.runStatus);
+
   const resolved = game.status !== "PENDING";
   const nextRevealMs = game.revealLadder[game.stage] ?? null;
 
@@ -582,14 +615,11 @@ function DailyGame({
                   void game.nextRound();
                 }
               }}
-              roundsSolved={game.roundsSolved}
-              bestStreak={game.bestStreak}
-              roundHistory={game.roundHistory}
-              level={game.level}
-              xpProgress={game.xpProgress}
-              xpPerLevel={game.xpPerLevel}
-              rankName={game.rankName}
-              achievements={game.achievements}
+              // Only once the run is over: the lifetime rollup is written at
+              // completion, so mid-run this would be a bar that never moves.
+              progression={
+                game.runStatus === "COMPLETED" ? (playerStats?.progression ?? null) : null
+              }
             />
           ) : null}
         </section>

@@ -27,11 +27,17 @@ export function Modal({ title, onClose, children }: Props) {
       aria-modal="true"
       aria-labelledby={titleId}
     >
+      {/* Capped and column-flexed so a tall body scrolls INSIDE the card
+          instead of running off the bottom of the viewport. The title row and
+          the Close button stay pinned; only the middle scrolls, so a long panel
+          never strands the player with no visible way out. dvh, not vh —
+          mobile browser chrome makes vh taller than the space actually on
+          screen, which is exactly the case that overflowed. */}
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm rounded-[12px] border border-(--hairline) bg-(--surface-strong) p-5 shadow-2xl"
+        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-sm flex-col rounded-[12px] border border-(--hairline) bg-(--surface-strong) p-5 shadow-2xl"
       >
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex shrink-0 items-start justify-between gap-4">
           <h2 id={titleId} className="font-[family-name:var(--font-display)] text-2xl font-semibold leading-none text-(--text)">
             {title}
           </h2>
@@ -46,11 +52,13 @@ export function Modal({ title, onClose, children }: Props) {
             </svg>
           </button>
         </div>
-        <div className="mt-3">{children}</div>
+        {/* min-h-0 is load-bearing: without it a flex child refuses to shrink
+            below its content height and overflow-y never engages. */}
+        <div className="mt-3 min-h-0 flex-1 overflow-y-auto">{children}</div>
         <button
           type="button"
           onClick={onClose}
-          className="mt-5 min-h-11 w-full rounded-[7px] bg-(--signal) py-2.5 text-sm font-bold text-(--signal-ink) transition-colors duration-200 hover:bg-[#ffd071]"
+          className="mt-5 min-h-11 w-full shrink-0 rounded-[7px] bg-(--signal) py-2.5 text-sm font-bold text-(--signal-ink) transition-colors duration-200 hover:bg-[#ffd071]"
         >
           Close
         </button>

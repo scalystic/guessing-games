@@ -2,7 +2,16 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { waveformBars } from "@/lib/cover";
-import { loadYouTubeAPI, YT_ENDED, YT_PLAYING, type YTPlayerInstance } from "@/lib/youtube";
+import { Modal } from "@/components/Modal";
+import {
+  isYouTubeAPIBlocked,
+  loadYouTubeAPI,
+  youtubeErrorMessage,
+  YT_CONNECTION_ERROR_MESSAGE,
+  YT_ENDED,
+  YT_PLAYING,
+  type YTPlayerInstance,
+} from "@/lib/youtube";
 
 type Props = {
   audioUrl: string | null;
@@ -58,6 +67,12 @@ const YT_END_ARM_MS = 60;
 
 /// No playhead movement for this long, with a clip in flight, is a stall.
 const YT_STALL_GRACE_MS = 180;
+
+/// Shown when a stored clip — rather than a YouTube embed — refuses to play.
+/// No mention of YouTube: this audio comes from our own origin, so sending the
+/// player off to check youtube.com would be a wild goose chase.
+const AUDIO_ERROR_MESSAGE =
+  "Couldn't play this clip. Please check your internet connection and try again.";
 
 function formatDuration(ms: number) {
   const seconds = ms / 1000;
@@ -191,6 +206,14 @@ export function PlayerBar({
   /// hookStartMs echo cannot prime the same round twice.
   const ytPrimedIdRef = useRef<string | null>(null);
   const ytPrimeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /// Last failure the player itself reported, held rather than shown.
+  ///
+  /// onError fires for the muted priming play too, and that one happens before
+  /// anybody has pressed anything — putting a red box on the deck over a clip
+  /// nobody asked for yet would be alarming and premature. So it is parked here
+  /// and surfaced by the play that goes on to fail, which also lets that play
+  /// give YouTube's actual reason instead of the generic timeout wording.
+  const ytErrorRef = useRef<string | null>(null);
 
   /// revealMs as of the latest commit. onStateChange is registered once, when the
   /// player is constructed, so reading the prop directly would pin the handler to
@@ -205,6 +228,24 @@ export function PlayerBar({
   const [awaitingAudio, setAwaitingAudio] = useState(false);
   const [progressMs, setProgressMs] = useState(0);
   const [vuLevels, setVuLevels] = useState([0, 0]);
+  /// Why the last play produced no sound, or null when nothing has gone wrong.
+  /// Cleared by the next play attempt and by audio actually arriving, so a
+  /// failure that fixes itself does not leave a stale warning on the deck.
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
+  /// Whether that reason is currently in front of the player as a modal.
+  ///
+  /// Separate from the message itself because the two have different triggers.
+  /// A modal is an interruption and is only ever justified by a press: the deck
+  /// also learns about failures on its own (the API script timing out while
+  /// nobody has touched anything), and throwing a dialog over the board for one
+  /// of those would take the screen away from someone who did not ask for it.
+  /// Those set the message alone, which shows up as the quieter "No signal"
+  /// readout until a press makes it relevant.
+  const [errorModalOpen, setErrorModalOpen] = useState(false);
+  /// Bumped to re-run the player lifecycle effect below. A play pressed while
+  /// the IFrame API is unreachable retries the load here, so reconnecting and
+  /// pressing play again is all the recovery the player has to do.
+  const [ytRetryToken, setYtRetryToken] = useState(0);
   useEffect(() => { revealMsRef.current = revealMs; }, [revealMs]);
 
   useEffect(() => {
@@ -238,6 +279,11 @@ export function PlayerBar({
 
     loadYouTubeAPI(() => {
       if (cancelled || !ytContainerRef.current || !window.YT) return;
+
+      // A previous attempt may have left a load failure on screen; the API is
+      // here now, so it is no longer true.
+      ytErrorRef.current = null;
+      dismissPlaybackError();
 
       if (ytPlayerRef.current) {
         // A player already exists for an earlier round. If it's finished
@@ -289,6 +335,12 @@ export function PlayerBar({
             //
             // Safe to capture this render's primeYoutubeRound — it touches only
             // refs and its arguments, per the note above clearYoutubeWatchdog().
+            //
+            // A press made while this player was still initializing comes first:
+            // it is a clip somebody is waiting on, and priming would only warm
+            // a buffer for the play about to start anyway.
+            if (ytPendingPlayRef.current) { startQueuedYoutubePlay(); return; }
+
             const currentId = ytVideoIdRef.current;
             if (currentId) primeYoutubeRound(currentId, ytHookStartMsRef.current / 1000);
           },
@@ -313,8 +365,28 @@ export function PlayerBar({
               rafRef.current = requestAnimationFrame(youtubeTick);
             }
           },
+          onError: (event) => {
+            // The one signal that says outright "this will not play". Without
+            // it a dead embed only ever surfaced as the watchdog's eight
+            // seconds of "Cueing" followed by a silent reset.
+            const message = youtubeErrorMessage(event.data);
+            ytErrorRef.current = message;
+            // Priming failed too, so the warmed buffer it claimed is a fiction.
+            // Clearing both ids sends the next play back down the full
+            // load-and-play path rather than a seek into nothing.
+            ytPrimedIdRef.current = null;
+            ytLoadedIdRef.current = null;
+            if (ytPendingPlayRef.current) failYoutubeClip(message);
+          },
         },
       });
+    }, () => {
+      // The API script itself never arrived — YouTube is blocked or the
+      // connection is down. Nothing below will ever run, so say so now instead
+      // of leaving a play button that silently does nothing.
+      if (cancelled) return;
+      ytErrorRef.current = YT_CONNECTION_ERROR_MESSAGE;
+      setPlaybackError(YT_CONNECTION_ERROR_MESSAGE);
     });
 
     return () => { cancelled = true; };
@@ -325,7 +397,7 @@ export function PlayerBar({
   // refs precisely so that capturing the first one is safe; see the note above
   // clearYoutubeWatchdog().
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [youtubeVideoId, hookStartMs]);
+  }, [youtubeVideoId, hookStartMs, ytRetryToken]);
 
   // Destroy YouTube player on unmount
   useEffect(() => {
@@ -384,12 +456,42 @@ export function PlayerBar({
     ytStartWatchdogRef.current = setTimeout(() => {
       ytStartWatchdogRef.current = null;
       if (!ytPendingPlayRef.current) return;
-      const heard = Math.min(revealMsRef.current, youtubeAudibleMs());
-      stopYoutubePlayback();
-      if (ytReadyRef.current) ytPlayerRef.current?.pauseVideo();
-      setIsPlaying(false);
-      setProgressMs(heard);
+      // Prefer YouTube's own reason if the player gave one; a bare timeout
+      // means the embed never said anything at all, which is what a blocked or
+      // unreachable youtube.com looks like from here.
+      failYoutubeClip(ytErrorRef.current ?? YT_CONNECTION_ERROR_MESSAGE);
     }, YT_START_TIMEOUT_MS);
+  }
+
+  /// End a clip that never produced audio and tell the player why.
+  ///
+  /// Whatever was genuinely heard stays on the progress bar; the player is not
+  /// credited for the part that never played.
+  function failYoutubeClip(message: string) {
+    const heard = Math.min(revealMsRef.current, youtubeAudibleMs());
+    stopYoutubePlayback();
+    if (ytReadyRef.current) ytPlayerRef.current?.pauseVideo();
+    setIsPlaying(false);
+    setProgressMs(heard);
+    reportPlaybackFailure(message);
+  }
+
+  /// Put the reason in front of the player. Only for failures that answer a
+  /// press — see errorModalOpen.
+  function reportPlaybackFailure(message: string) {
+    setPlaybackError(message);
+    setErrorModalOpen(true);
+  }
+
+  /// Take the failure off the screen — both the dialog and the readout.
+  ///
+  /// Deliberately does NOT clear ytErrorRef: the sites that know the diagnosis
+  /// is stale (audio started, the round moved on) clear it themselves, whereas a
+  /// fresh press only supersedes the DISPLAY. If that press then dies on a bare
+  /// timeout, the last thing YouTube actually said is still the better answer.
+  function dismissPlaybackError() {
+    setPlaybackError(null);
+    setErrorModalOpen(false);
   }
 
   function readYoutubePlayhead(): number | null {
@@ -473,6 +575,9 @@ export function PlayerBar({
           clearYoutubeWatchdog();
           clearYoutubeKick();
           setAwaitingAudio(false);
+          // Sound is coming out. Whatever went wrong before did not this time.
+          ytErrorRef.current = null;
+          dismissPlaybackError();
         }
       }
     }
@@ -723,6 +828,10 @@ export function PlayerBar({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (isPlaying) setIsPlaying(false);
     if (progressMs !== 0) setProgressMs(0);
+    // The warning belonged to the previous video. If the new one is just as
+    // broken, its own play will say so.
+    ytErrorRef.current = null;
+    if (playbackError) dismissPlaybackError();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [youtubeVideoId]);
 
@@ -791,6 +900,7 @@ export function PlayerBar({
     setLastUrl(audioUrl);
     if (isPlaying) setIsPlaying(false);
     if (progressMs !== 0) setProgressMs(0);
+    if (playbackError) dismissPlaybackError();
   }
 
   function tick() {
@@ -812,11 +922,19 @@ export function PlayerBar({
     playStartRef.current = performance.now();
     setIsPlaying(true);
     setProgressMs(0);
+    dismissPlaybackError();
     rafRef.current = requestAnimationFrame(tick);
 
     audio.currentTime = 0;
     audio.volume = 1;
-    void audio.play().catch(() => setIsPlaying(false));
+    void audio.play().catch(() => {
+      // A clip that cannot be fetched or decoded. The reset alone reads as a
+      // dead button, so name the most likely cause.
+      stopPlayback();
+      setIsPlaying(false);
+      setProgressMs(0);
+      reportPlaybackFailure(AUDIO_ERROR_MESSAGE);
+    });
 
     const fadeStart = Math.max(0, revealMs - FADE_OUT_MS);
     fadeTimeoutRef.current = setTimeout(() => {
@@ -837,10 +955,38 @@ export function PlayerBar({
 
   function handleYoutubePlay() {
     const player = ytPlayerRef.current;
-    if (!player || !ytReadyRef.current) return;
+    if (!player || !ytReadyRef.current) {
+      // Nothing to press play ON yet. Used to return here without a word, which
+      // is the "I click play and nothing happens" report.
+      //
+      // Two very different situations, though, and only one is an error. A load
+      // that has already FAILED is worth saying so immediately, plus another
+      // attempt at it so a player who has just reconnected gets their round
+      // back. A load still IN FLIGHT is merely early — the API script beats the
+      // first press most of the time but not always — and refusing a press that
+      // was about to work is its own bug. So that one is queued: the deck says
+      // Cueing, onReady starts it, and the watchdog is armed so an API that
+      // never arrives still ends in an honest message rather than a spinner.
+      if (isYouTubeAPIBlocked()) {
+        reportPlaybackFailure(ytErrorRef.current ?? YT_CONNECTION_ERROR_MESSAGE);
+        setYtRetryToken((token) => token + 1);
+        return;
+      }
+
+      dismissPlaybackError();
+      ytPendingPlayRef.current = true;
+      ytZeroRef.current = null;
+      ytLastPlayheadRef.current = null;
+      setIsPlaying(true);
+      setProgressMs(0);
+      setAwaitingAudio(true);
+      armYoutubeWatchdog();
+      return;
+    }
 
     // Also cancels any in-flight priming, so it cannot park this clip.
     stopYoutubePlayback();
+    dismissPlaybackError();
 
     // MUST come before the play. If the click lands inside the prime window the
     // player is still muted, and the clock is metered off the playhead — which
@@ -877,6 +1023,34 @@ export function PlayerBar({
     rafRef.current = requestAnimationFrame(youtubeTick);
   }
 
+  /// Start the clip a press asked for before the player existed.
+  ///
+  /// Everything handleYoutubePlay does from the play onward, minus the state it
+  /// already set when it took the press. Reads the offset from a ref rather than
+  /// the prop because its only caller is onReady, which is registered once —
+  /// see the note above clearYoutubeWatchdog().
+  function startQueuedYoutubePlay() {
+    const player = ytPlayerRef.current;
+    if (!player || !ytReadyRef.current) return;
+
+    const targetSeconds = ytHookStartMsRef.current / 1000;
+    try {
+      player.unMute();
+    } catch {
+      /* unusable player; the watchdog ends the clip */
+    }
+
+    ytLastSampleAtRef.current = performance.now();
+    ytLastAdvanceAtRef.current = performance.now();
+
+    startYoutubePlayback(player, targetSeconds);
+
+    armYoutubeWatchdog();
+    armYoutubeKick(targetSeconds);
+    stopYoutubeFrameLoop();
+    rafRef.current = requestAnimationFrame(youtubeTick);
+  }
+
   function handleYoutubeStop() {
     stopYoutubePlayback();
     if (ytReadyRef.current) ytPlayerRef.current?.pauseVideo();
@@ -892,6 +1066,11 @@ export function PlayerBar({
   const disabled = onPlayRequested
     ? loading
     : loading || (!audioUrl && !isYoutube);
+
+  /// The era picker borrows the deck, and its button is not a play button, so a
+  /// playback warning under it would be about a clip nobody tried to play.
+  const showError = Boolean(playbackError) && !onPlayRequested && !loading;
+  const showErrorModal = showError && errorModalOpen;
 
   const playHandler = onPlayRequested
     ?? (isYoutube
@@ -921,13 +1100,19 @@ export function PlayerBar({
             <span className="h-1.5 w-1.5 rounded-full bg-[#ff4d4d] animate-pulse shadow-[0_0_6px_#ff4d4d]" />
           )}
           {!isPlaying && !loading && (
-            <span className="h-1.5 w-1.5 rounded-full bg-[#525a70]" />
+            <span className={`h-1.5 w-1.5 rounded-full ${showError ? "bg-[#ef5b57]" : "bg-[#525a70]"}`} />
           )}
           {(loading || (isPlaying && awaitingAudio)) && (
             <span className="h-1.5 w-1.5 rounded-full bg-[#f2b84b] animate-ping" />
           )}
           <span>
-            {loading ? "Tuning" : isPlaying ? (awaitingAudio ? "Cueing" : "On air") : "Ready"}
+            {loading
+              ? "Tuning"
+              : isPlaying
+                ? (awaitingAudio ? "Cueing" : "On air")
+                : showError
+                  ? "No signal"
+                  : "Ready"}
           </span>
         </div>
       </div>
@@ -1029,6 +1214,7 @@ export function PlayerBar({
         </div>
       </div>
 
+
       <ol
         className="reveal-rail relative mt-4 grid grid-cols-6 [@media(max-height:820px)]:mt-3 sm:mt-5"
         style={{ "--rail-progress": `${railProgress}%` } as CSSProperties}
@@ -1073,6 +1259,15 @@ export function PlayerBar({
           );
         })}
       </ol>
+
+      {/* Closing dismisses the DIALOG, not the failure: the deck goes on
+          reading "No signal" for as long as that is still true, so the player
+          is never left with a board that looks fine over a dead button. */}
+      {showErrorModal ? (
+        <Modal title="Playback problem" onClose={() => setErrorModalOpen(false)}>
+          <p className="text-sm leading-5 text-(--text-dim)">{playbackError}</p>
+        </Modal>
+      ) : null}
     </section>
   );
 }

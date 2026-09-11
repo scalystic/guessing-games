@@ -62,6 +62,11 @@ model Player {
   /// Google OAuth Subject ID
   googleId   String? @unique
 
+  /// Age entered by the user during account setup. This is self-declared,
+  /// not supplied or verified by Google. Null is retained for guests and for
+  /// existing accounts until they complete the post-auth age gate.
+  declaredAge Int?
+
   xp    Int @default(0)
   level Int @default(1)
   coins Int @default(0)

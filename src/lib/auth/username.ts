@@ -24,14 +24,21 @@ export function normalizeUsername(input: string): string {
   return input.trim().toLowerCase();
 }
 
-/// 3–20 characters of lowercase letters, digits and underscore, starting with
+/// Keeps the controlled username fields limited to the same character set the
+/// server accepts. Server validation still rejects invalid raw input instead
+/// of relying on this client-side convenience.
+export function sanitizeUsernameInput(input: string): string {
+  return normalizeUsername(input).replace(/[^a-z0-9.]/g, "");
+}
+
+/// 3–20 characters of lowercase letters, digits and dots, starting with
 /// a letter or digit.
 ///
 /// Deliberately an allowlist and deliberately narrower than displayName's
 /// (which permits any script plus punctuation): a handle is an identifier, it
 /// shows up in URLs and server-built HTML, and the tighter the character set
-/// the fewer ways one username can be made to look like another. No leading
-/// underscore, so a handle can't hide at the top of an alphabetical list.
+/// the fewer ways one username can be made to look like another. A dot is the
+/// only punctuation allowed, and a handle cannot start with one.
 export const UsernameSchema = z
   .string()
   .transform(normalizeUsername)
@@ -41,8 +48,8 @@ export const UsernameSchema = z
       .min(3, "Username must be at least 3 characters.")
       .max(20, "Username must be at most 20 characters.")
       .regex(
-        /^[a-z0-9][a-z0-9_]*$/,
-        "Use lowercase letters, numbers and underscores, starting with a letter or number.",
+        /^[a-z0-9][a-z0-9.]*$/,
+        "Use lowercase letters, numbers and dots only, starting with a letter or number.",
       ),
   );
 
