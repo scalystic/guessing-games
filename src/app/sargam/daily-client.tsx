@@ -230,6 +230,11 @@ function AlreadyPlayedPanel({
     );
   }
 
+  /// Rewards are per-challenge and default to 0, which is the common case. An
+  /// empty "—" tile just advertises a reward slot that today has nothing in it,
+  /// so drop the tile entirely and let Rounds take the full width.
+  const hasRewards = info.rewardCoins > 0 || info.rewardXp > 0;
+
   return (
     <div className="flex flex-col items-center py-12">
       <div className="w-full max-w-sm rounded-[14px] border border-(--hairline) bg-(--surface-strong) p-6 shadow-xl">
@@ -241,22 +246,18 @@ function AlreadyPlayedPanel({
         </h2>
         <p className="mt-1 text-xs text-(--text-faint)">{formatDay(info.dayKey)}</p>
 
-        <div className="mt-4 grid grid-cols-2 gap-2">
+        <div className={`mt-4 grid gap-2 ${hasRewards ? "grid-cols-2" : "grid-cols-1"}`}>
           <div className="rounded-xl border border-(--hairline) bg-(--surface) px-3 py-2.5 text-center">
             <p className="text-xl font-bold text-(--text)">{info.roundCount}</p>
             <p className="mt-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-(--text-faint)">Rounds</p>
           </div>
-          <div className="rounded-xl border border-(--hairline) bg-(--surface) px-3 py-2.5 text-center">
-            {info.rewardCoins > 0 || info.rewardXp > 0 ? (
-              <>
-                {info.rewardCoins > 0 && <p className="text-sm font-bold text-amber-500">{info.rewardCoins} coins</p>}
-                {info.rewardXp > 0 && <p className="text-sm font-bold text-(--success)">{info.rewardXp} XP</p>}
-              </>
-            ) : (
-              <p className="text-sm font-bold text-(--text-faint)">—</p>
-            )}
-            <p className="mt-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-(--text-faint)">Rewards</p>
-          </div>
+          {hasRewards && (
+            <div className="rounded-xl border border-(--hairline) bg-(--surface) px-3 py-2.5 text-center">
+              {info.rewardCoins > 0 && <p className="text-sm font-bold text-amber-500">{info.rewardCoins} coins</p>}
+              {info.rewardXp > 0 && <p className="text-sm font-bold text-(--success)">{info.rewardXp} XP</p>}
+              <p className="mt-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-(--text-faint)">Rewards</p>
+            </div>
+          )}
         </div>
 
         <div className="mt-3 rounded-xl border border-(--hairline) bg-(--surface) px-4 py-3 text-center">

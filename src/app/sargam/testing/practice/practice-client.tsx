@@ -322,26 +322,26 @@ function TodaysChallengeModal({
           <>
             <p className="mb-4 text-xs text-(--text-faint)">{formatDay(challenge.dayKey)}</p>
 
-            <div className="mb-5 grid grid-cols-2 gap-2">
+            <div
+              className={`mb-5 grid gap-2 ${
+                challenge.rewardCoins > 0 || challenge.rewardXp > 0 ? "grid-cols-2" : "grid-cols-1"
+              }`}
+            >
               <div className="rounded-xl border border-(--hairline) bg-(--surface) px-3 py-2.5 text-center">
                 <p className="text-xl font-bold text-(--text)">{challenge.roundCount}</p>
                 <p className="mt-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-(--text-faint)">Rounds</p>
               </div>
-              <div className="rounded-xl border border-(--hairline) bg-(--surface) px-3 py-2.5 text-center">
-                {challenge.rewardCoins > 0 || challenge.rewardXp > 0 ? (
-                  <>
-                    {challenge.rewardCoins > 0 && (
-                      <p className="text-sm font-bold text-amber-500">{challenge.rewardCoins} coins</p>
-                    )}
-                    {challenge.rewardXp > 0 && (
-                      <p className="text-sm font-bold text-(--success)">{challenge.rewardXp} XP</p>
-                    )}
-                  </>
-                ) : (
-                  <p className="text-sm font-bold text-(--text-faint)">—</p>
-                )}
-                <p className="mt-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-(--text-faint)">Rewards</p>
-              </div>
+              {(challenge.rewardCoins > 0 || challenge.rewardXp > 0) && (
+                <div className="rounded-xl border border-(--hairline) bg-(--surface) px-3 py-2.5 text-center">
+                  {challenge.rewardCoins > 0 && (
+                    <p className="text-sm font-bold text-amber-500">{challenge.rewardCoins} coins</p>
+                  )}
+                  {challenge.rewardXp > 0 && (
+                    <p className="text-sm font-bold text-(--success)">{challenge.rewardXp} XP</p>
+                  )}
+                  <p className="mt-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-(--text-faint)">Rewards</p>
+                </div>
+              )}
             </div>
 
             {challenge.alreadyPlayed ? (
