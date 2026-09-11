@@ -4,6 +4,7 @@ import { decodeJwt } from "jose";
 import { prisma } from "@/lib/db";
 import { createSession, getSession } from "@/lib/session";
 import { claimGuestProgress } from "@/lib/auth/merge-guest";
+import { postAuthDestination } from "@/lib/auth/post-auth";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -108,7 +109,7 @@ export async function GET(request: Request) {
       );
 
       await createSession(player.id, "USER");
-      redirect("/");
+      redirect(await postAuthDestination(player.id));
     } else {
       // Fresh user or Guest merge
       if (guestPlayerId) {
@@ -157,7 +158,7 @@ export async function GET(request: Request) {
         });
 
         await createSession(guestPlayerId, "USER");
-        redirect("/");
+        redirect(await postAuthDestination(guestPlayerId));
       } else {
         // Fresh signup (no guest session)
         const newPlayer = await prisma.player.create({
@@ -177,7 +178,7 @@ export async function GET(request: Request) {
         });
 
         await createSession(newPlayer.id, "USER");
-        redirect("/");
+        redirect(await postAuthDestination(newPlayer.id));
       }
     }
   } catch (error) {

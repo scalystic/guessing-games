@@ -70,12 +70,24 @@ export function DailyStreakStrip({
         ))}
       </ul>
 
+      {/* An icon, not the "Full calendar" label this used to be: at the end of
+          a row of seven date circles the strip reads as a calendar already, so
+          the words were saying what the row was. Sized and shaped like one more
+          circle, and self-end rather than centred so it lines up with the
+          circles instead of with the whole column (which includes the weekday
+          letters above them). */}
       <button
         type="button"
         onClick={onOpenCalendar}
-        className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-(--signal) underline decoration-(--hairline) underline-offset-4 transition hover:text-(--text)"
+        aria-label="Open full calendar"
+        title="Full calendar"
+        className="flex h-8 w-8 shrink-0 items-center justify-center self-end rounded-full border border-(--hairline) text-(--signal) transition hover:bg-(--surface-hover) hover:text-(--text)"
       >
-        Full calendar
+        <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+          <rect x="3" y="4" width="14" height="13" rx="2" />
+          <path d="M3 9h14M7 2v3M13 2v3" strokeLinecap="round" />
+          <path d="M6.5 12.5h1.2M9.4 12.5h1.2M12.3 12.5h1.2" strokeLinecap="round" />
+        </svg>
       </button>
     </div>
   );

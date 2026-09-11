@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { createSession, deleteSession, getSession } from "@/lib/session";
 import { claimGuestProgress } from "@/lib/auth/merge-guest";
+import { postAuthDestination, safeNextPath } from "@/lib/auth/post-auth";
+import { isReservedUsername, isUsernameTakenError } from "@/lib/auth/username";
 import {
   SignupSchema,
   LoginSchema,
@@ -24,6 +26,7 @@ export async function signup(
   // 1. Validate
   const parsed = SignupSchema.safeParse({
     displayName: formData.get("displayName"),
+    username: formData.get("username"),
     email: formData.get("email"),
     password: formData.get("password"),
   });
@@ -32,7 +35,13 @@ export async function signup(
     return { errors: parsed.error.flatten().fieldErrors };
   }
 
-  const { displayName, email, password } = parsed.data;
+  const { displayName, username, email, password } = parsed.data;
+
+  // Shape and reserved-word checks passed above; this catches the reserved
+  // list, which the schema alone doesn't cover.
+  if (isReservedUsername(username)) {
+    return { errors: { username: ["That username is reserved. Pick another."] } };
+  }
 
   // 2. Check email uniqueness
   const existing = await prisma.player.findUnique({
@@ -69,6 +78,7 @@ export async function signup(
           data: {
             kind: "USER",
             displayName,
+            handle: username,
             email,
             passwordHash,
             // For self-managed auth, authUserId == player id.
@@ -112,6 +122,7 @@ export async function signup(
         data: {
           kind: "USER",
           displayName,
+          handle: username,
           email,
           passwordHash,
           authUserId: undefined, // set after creation
@@ -128,11 +139,21 @@ export async function signup(
       await createSession(player.id, "USER");
     }
   } catch (error) {
+    // The unique index on Player.handle is what actually decides who gets a
+    // username, not the check above — two people submitting the same one at
+    // the same moment both pass validation and one insert loses. Reporting it
+    // as a field error puts them back in the form with the cursor in the right
+    // place, instead of "something went wrong".
+    if (isUsernameTakenError(error)) {
+      return { errors: { username: ["That username is taken. Try another."] } };
+    }
     console.error("[auth:signup]", error);
     return { message: "Something went wrong. Please try again." };
   }
 
-  redirect("/");
+  // Signup collected a username in the form, so this lands on `next` rather
+  // than the username gate.
+  redirect(safeNextPath(formData.get("next")?.toString()));
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +203,9 @@ export async function login(
   // 5. Create session
   await createSession(player.id, "USER");
 
-  redirect("/");
+  // Accounts created before usernames shipped have handle = null, so logging
+  // in is also a place one gets claimed.
+  redirect(await postAuthDestination(player.id, safeNextPath(formData.get("next")?.toString())));
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import type { CurrentUser } from "@/lib/get-current-user";
 import type { GameDetail } from "@/lib/games";
 import { useMelodleGame } from "@/hooks/useMelodleGame";
@@ -21,11 +20,23 @@ import { DailyCalendarModal } from "@/components/DailyCalendarModal";
 import { useDailyHistory } from "@/hooks/useDailyHistory";
 import { RunErrorDialog } from "@/components/RunErrorDialog";
 import { DailySharePoster } from "@/components/DailySharePoster";
+import { MultiplayerEntry } from "@/components/MultiplayerEntry";
+import { LeaderboardGate } from "@/components/LeaderboardGate";
 
 function formatSeconds(milliseconds: number) {
   const seconds = milliseconds / 1000;
   return seconds < 1 ? seconds.toFixed(1) : Number.isInteger(seconds) ? seconds : seconds.toFixed(1);
 }
+
+/// Shown wherever today's set is closed to this player — already played, or
+/// finished. There is no practice mode to send them to any more, so the only
+/// useful thing left to say is when the next one opens.
+///
+/// Midnight UTC because that is what the day key actually is: the /today route
+/// keys off `new Date().toISOString().slice(0, 10)`. Spelled out rather than
+/// left as "tomorrow", which is wrong for anyone east of UTC in the hours
+/// before their local midnight.
+const NEXT_SET_NOTE = "A new set unlocks every day at midnight UTC.";
 
 /// One finished round as the /today route reports it. Only used here now, to
 /// count how many songs were named on the first listen.
@@ -64,25 +75,36 @@ function formatDay(dayKey: string) {
   });
 }
 
+/// The chrome every daily state renders inside — header, menu, streak strip —
+/// so the "not played yet", "already played" and "no challenge today" screens
+/// can't drift apart.
+///
+/// Takes the whole GameDetail rather than a slug plus an attempt count: the
+/// multiplayer picker lives in here now (see below) and wants the reveal ladder
+/// and tagline too.
 function PageShell({
   user,
-  gameSlug,
-  maxAttempts,
+  config,
   showHelp,
   onHelp,
   onHelpClose,
+  runCompleted = false,
   children,
 }: {
   user: CurrentUser;
-  gameSlug: string;
-  maxAttempts: number;
+  config: GameDetail;
   showHelp: boolean;
   onHelp: () => void;
   onHelpClose: () => void;
+  /// Flips true the moment this player's daily run finishes. Feeds the history
+  /// refetch so the streak pill and the week strip pick up today — they are
+  /// fetched on mount, which is before the run was played.
+  runCompleted?: boolean;
   children: React.ReactNode;
 }) {
-  const history = useDailyHistory(gameSlug);
+  const history = useDailyHistory(config.slug, runCompleted);
   const [showCalendar, setShowCalendar] = useState(false);
+  const [showMultiplayer, setShowMultiplayer] = useState(false);
 
   // min-h-full, not min-h-screen — same reason as the Sargam shell: the root
   // layout renders a footer below <main>, so pinning this to the viewport
@@ -99,7 +121,17 @@ function PageShell({
           <GameMenu
             user={user}
             items={[
-              { icon: "home", label: "Practice mode", hint: "Unlimited rounds, any era", href: "/" },
+              // Multiplayer moved in here from the practice screen when that
+              // screen stopped being a place players go. Held back for now —
+              // the row stays listed so players know the mode is coming, but
+              // it does not open the picker.
+              {
+                icon: "multiplayer",
+                label: "Multiplayer",
+                hint: "Play a room with friends",
+                badge: "Soon",
+                disabled: true,
+              },
               {
                 icon: "calendar",
                 label: "Daily calendar",
@@ -122,19 +154,40 @@ function PageShell({
 
       {showHelp && (
         <Modal title="How to play" onClose={onHelpClose}>
-          <HowToPlayList maxAttempts={maxAttempts} />
+          <HowToPlayList maxAttempts={config.maxAttempts} />
         </Modal>
       )}
 
       {showCalendar && (
-        <DailyCalendarModal gameSlug={gameSlug} onClose={() => setShowCalendar(false)} />
+        <DailyCalendarModal gameSlug={config.slug} onClose={() => setShowCalendar(false)} />
       )}
+
+      {/* Mounted out here, not inside the menu: its trigger is a menu row, and
+          the menu unmounts on click, which would take the picker with it. */}
+      <MultiplayerEntry
+        gameSlug={config.slug}
+        tagline={config.tagline}
+        revealLadder={config.revealLadder}
+        maxAttempts={config.maxAttempts}
+        user={user}
+        open={showMultiplayer}
+        onOpenChange={setShowMultiplayer}
+      />
     </div>
   );
 }
 
-function AlreadyPlayedPanel({ info, firstRevealMs }: { info: ChallengeInfo; firstRevealMs: number }) {
+function AlreadyPlayedPanel({
+  info,
+  firstRevealMs,
+  user,
+}: {
+  info: ChallengeInfo;
+  firstRevealMs: number;
+  user: CurrentUser;
+}) {
   const completed = info.runStatus === "COMPLETED";
+  const boardVisible = user?.kind === "USER" && user.handle !== null;
 
   if (completed && info.result) {
     return (
@@ -145,6 +198,7 @@ function AlreadyPlayedPanel({ info, firstRevealMs }: { info: ChallengeInfo; firs
         dayKey={info.dayKey}
         instantSolves={countInstantSolves(info.result.roundHistory)}
         firstRevealMs={firstRevealMs}
+        user={user}
       />
     );
   }
@@ -186,19 +240,24 @@ function AlreadyPlayedPanel({ info, firstRevealMs }: { info: ChallengeInfo; firs
           </p>
         </div>
 
-        <div className="mt-4 text-left">
-          <p className="mb-3 text-center font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-(--text-faint)">
-            Today&apos;s Leaderboard
-          </p>
-          <Leaderboard dayKey={info.dayKey} accent="var(--signal)" />
-        </div>
+        {/* Same rule as the completion panel — the board is for named
+            players, and this screen shows it to the same people. */}
+        {boardVisible ? (
+          <div className="mt-4 text-left">
+            <p className="mb-3 text-center font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-(--text-faint)">
+              Today&apos;s Leaderboard
+            </p>
+            <Leaderboard dayKey={info.dayKey} accent="var(--signal)" />
+          </div>
+        ) : (
+          <div className="mt-4 flex justify-center">
+            <LeaderboardGate reason={user?.kind === "USER" ? "no-username" : "guest"} />
+          </div>
+        )}
 
-        <Link
-          href="/"
-          className="mt-4 block w-full rounded-xl border border-(--hairline) px-4 py-2.5 text-center text-sm font-semibold text-(--text-dim) transition hover:bg-(--surface-hover) hover:text-(--text)"
-        >
-          Back to Home
-        </Link>
+        {/* Used to be a "Back to Home" link. Home is this page now, so the
+            honest thing to offer is when the next set lands. */}
+        <p className="mt-4 text-center text-xs text-(--text-faint)">{NEXT_SET_NOTE}</p>
       </div>
     </div>
   );
@@ -211,6 +270,7 @@ function ChallengeCompletePanel({
   dayKey,
   instantSolves,
   firstRevealMs,
+  user,
 }: {
   roundsSolved: number;
   roundCount: number;
@@ -218,11 +278,19 @@ function ChallengeCompletePanel({
   dayKey: string;
   instantSolves: number;
   firstRevealMs: number;
+  /// Decides whether the leaderboard renders or the gate does. Keyed on
+  /// `handle`, not `kind`: an account that hasn't claimed a username yet has
+  /// nothing to be listed under, so it gets the gate too — pointed at
+  /// /username instead of signup.
+  user: CurrentUser;
 }) {
   const [board, setBoard] = useState<{ rank: number | null; total: number | null }>({
     rank: null,
     total: null,
   });
+
+  /// Who gets the board, and who gets the gate in its place.
+  const boardVisible = user?.kind === "USER" && user.handle !== null;
 
   // The poster prints today's standing, which only exists server-side — and
   // only once completeRun() has written this player's leaderboard row, which
@@ -252,6 +320,11 @@ function ChallengeCompletePanel({
         </p>
       </div>
 
+      {/* Poster is NOT gated: it is the daily's word-of-mouth loop, and a
+          guest who just finished should still be able to send their result to
+          someone. It prints a rank, which the /leaderboard route hands out to
+          anyone — being ranked and being able to read the board are separate
+          things here. */}
       <DailySharePoster
         dayKey={dayKey}
         rank={board.rank}
@@ -263,19 +336,18 @@ function ChallengeCompletePanel({
         score={score}
       />
 
-      <div className="w-full max-w-sm text-left">
-        <p className="mb-3 text-center font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-(--text-faint)">
-          Today&apos;s Leaderboard
-        </p>
-        <Leaderboard dayKey={dayKey} accent="var(--signal)" />
-      </div>
+      {boardVisible ? (
+        <div className="w-full max-w-sm text-left">
+          <p className="mb-3 text-center font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-(--text-faint)">
+            Today&apos;s Leaderboard
+          </p>
+          <Leaderboard dayKey={dayKey} accent="var(--signal)" />
+        </div>
+      ) : (
+        <LeaderboardGate reason={user?.kind === "USER" ? "no-username" : "guest"} />
+      )}
 
-      <Link
-        href="/"
-        className="rounded-xl border border-(--hairline) px-5 py-2.5 text-sm font-semibold text-(--text-dim) transition hover:bg-(--surface-hover) hover:text-(--text)"
-      >
-        Back to Home
-      </Link>
+      <p className="text-xs text-(--text-faint)">{NEXT_SET_NOTE}</p>
     </div>
   );
 }
@@ -335,11 +407,11 @@ function DailyGame({
   return (
     <PageShell
       user={user}
-      gameSlug={config.slug}
-      maxAttempts={config.maxAttempts}
+      config={config}
       showHelp={showHelp}
       onHelp={() => setShowHelp(true)}
       onHelpClose={() => setShowHelp(false)}
+      runCompleted={game.runStatus === "COMPLETED"}
     >
       {game.error && game.phase === "error" ? (
         <RunErrorDialog
@@ -374,6 +446,7 @@ function DailyGame({
           dayKey={dayKey}
           instantSolves={countInstantSolves(game.roundHistory)}
           firstRevealMs={config.revealLadder[0] ?? 0}
+          user={user}
         />
       ) : (
         <section className="py-3 [@media(max-height:820px)]:py-2 sm:py-5" aria-labelledby="mystery-track-title">
@@ -543,8 +616,7 @@ export default function DailyClient({ user, game: config }: { user: CurrentUser;
     return (
       <PageShell
         user={user}
-        gameSlug={config.slug}
-        maxAttempts={config.maxAttempts}
+        config={config}
         showHelp={showHelp}
         onHelp={() => setShowHelp(true)}
         onHelpClose={() => setShowHelp(false)}
@@ -561,17 +633,14 @@ export default function DailyClient({ user, game: config }: { user: CurrentUser;
     return (
       <PageShell
         user={user}
-        gameSlug={config.slug}
-        maxAttempts={config.maxAttempts}
+        config={config}
         showHelp={showHelp}
         onHelp={() => setShowHelp(true)}
         onHelpClose={() => setShowHelp(false)}
       >
         <div className="flex flex-col items-center py-20 text-center">
           <p className="text-sm text-(--text-dim)">No daily challenge is available today.</p>
-          <Link href="/" className="mt-4 text-sm font-semibold text-(--signal) underline underline-offset-4">
-            Back to Home
-          </Link>
+          <p className="mt-2 text-xs text-(--text-faint)">{NEXT_SET_NOTE}</p>
         </div>
       </PageShell>
     );
@@ -582,13 +651,16 @@ export default function DailyClient({ user, game: config }: { user: CurrentUser;
     return (
       <PageShell
         user={user}
-        gameSlug={config.slug}
-        maxAttempts={config.maxAttempts}
+        config={config}
         showHelp={showHelp}
         onHelp={() => setShowHelp(true)}
         onHelpClose={() => setShowHelp(false)}
       >
-        <AlreadyPlayedPanel info={challengeInfo} firstRevealMs={config.revealLadder[0] ?? 0} />
+        <AlreadyPlayedPanel
+          info={challengeInfo}
+          firstRevealMs={config.revealLadder[0] ?? 0}
+          user={user}
+        />
       </PageShell>
     );
   }

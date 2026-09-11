@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { UsernameSchema } from "@/lib/auth/username";
 
 // ---------------------------------------------------------------------------
 // Signup
@@ -10,6 +11,10 @@ export const SignupSchema = z.object({
     .min(2, "Name must be at least 2 characters.")
     .max(50, "Name must be at most 50 characters.")
     .trim(),
+  /// The public, unique one — see src/lib/auth/username.ts for why this is a
+  /// separate field from displayName rather than a normalized copy of it.
+  /// Uniqueness is enforced by the DB index, not here.
+  username: UsernameSchema,
   email: z
     .string()
     .email("Please enter a valid email.")

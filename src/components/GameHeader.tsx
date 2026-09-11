@@ -14,7 +14,7 @@ export function GameHeader({
   children: React.ReactNode;
 }) {
   return (
-    <header className="flex items-center justify-between gap-3 border-b border-(--hairline) pb-3">
+    <header className="flex items-center justify-between gap-3 border-b border-(--hairline) pt-2 pb-3 sm:pt-3">
       <div className="min-w-0">
         <div className="flex items-center gap-2.5">
           <span className="h-6 w-1.5 bg-(--signal)" aria-hidden="true" />

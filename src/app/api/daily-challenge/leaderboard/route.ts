@@ -1,13 +1,8 @@
 import { prisma } from "@/lib/db";
-import { ensurePlayer } from "@/lib/guest";
+import { getExistingPlayerId } from "@/lib/guest";
 import { jsonError, jsonOk, internalErrorJson } from "@/lib/api/response";
 
 export const dynamic = "force-dynamic";
-
-function clientIp(request: Request): string | null {
-  const forwarded = request.headers.get("x-forwarded-for");
-  return forwarded?.split(",")[0]?.trim() ?? null;
-}
 
 type BoardRow = {
   rank: bigint;
@@ -40,7 +35,12 @@ export async function GET(request: Request): Promise<Response> {
       SELECT
         RANK() OVER (ORDER BY le.score DESC, le."tieBreakRevealMs" ASC NULLS LAST) AS rank,
         le."playerId"          AS player_id,
-        p."displayName"        AS display_name,
+        -- handle first: it is the unique, public username every account holds,
+        -- and the only one of the two that cannot collide. displayName is the
+        -- fallback for guests, who have no handle and may have named
+        -- themselves via the multiplayer picker; a guest with neither falls
+        -- through to "Player" in the mapping below.
+        COALESCE(p.handle, p."displayName") AS display_name,
         le.score                AS score,
         le."tieBreakRevealMs"  AS tie_break_reveal_ms
       FROM "LeaderboardEntry" le
@@ -52,16 +52,30 @@ export async function GET(request: Request): Promise<Response> {
       LIMIT ${limit}
     `;
 
-    const { playerId } = await ensurePlayer(clientIp(request));
-    const inTop = entries.find((e) => e.player_id === playerId);
+    // Read-only: never mints a guest. See the note on the /today route — a GET
+    // that provisions an identity raced the other two on first load and split
+    // one visitor across several Player rows, so a player's own board row came
+    // back as someone else's ("Player", no isYou).
+    //
+    // A viewer with no session simply has no row here, which is right: they
+    // have not finished a run, so they are not on the board.
+    const playerId = await getExistingPlayerId();
+    const inTop = playerId === null ? undefined : entries.find((e) => e.player_id === playerId);
 
     // The viewer's own row even when it falls outside the page — the count
     // of strictly-better entries is one cheaper query than re-ranking
     // everything, and only runs when the viewer didn't already show up above.
-    let you: { rank: number; score: number } | null = null;
+    // Carries displayName as well as the placement: the client renders this row
+    // as "<name> (You)", same as an in-page row, and the name is the half it
+    // cannot derive on its own.
+    let you: { rank: number; score: number; displayName: string | null } | null = null;
     if (inTop) {
-      you = { rank: Number(inTop.rank), score: inTop.score };
-    } else {
+      you = {
+        rank: Number(inTop.rank),
+        score: inTop.score,
+        displayName: inTop.display_name,
+      };
+    } else if (playerId !== null) {
       const own = await prisma.leaderboardEntry.findUnique({
         where: {
           gameId_boardType_periodKey_playerId: {
@@ -71,7 +85,11 @@ export async function GET(request: Request): Promise<Response> {
             playerId,
           },
         },
-        select: { score: true, tieBreakRevealMs: true },
+        select: {
+          score: true,
+          tieBreakRevealMs: true,
+          player: { select: { handle: true, displayName: true } },
+        },
       });
       if (own) {
         const better = await prisma.leaderboardEntry.count({
@@ -88,7 +106,12 @@ export async function GET(request: Request): Promise<Response> {
             ],
           },
         });
-        you = { rank: better + 1, score: own.score };
+        you = {
+          rank: better + 1,
+          score: own.score,
+          // Same precedence as the SELECT above.
+          displayName: own.player.handle ?? own.player.displayName,
+        };
       }
     }
 

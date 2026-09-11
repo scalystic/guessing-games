@@ -6,13 +6,18 @@ import { login } from "@/lib/auth/actions";
 import GoogleButton from "@/app/components/auth/google-button";
 import { getServerThemeColor, getThemeColor, subscribeThemeColor } from "@/lib/theme-color";
 
-export default function LoginForm() {
+/// `next` is where auth returns to — the post-run leaderboard gate links
+/// here with it set, so signing in from the end of a run lands back on the
+/// result instead of the top of the game. Validated server-side by
+/// safeNextPath() before any redirect uses it.
+export default function LoginForm({ next }: { next: string }) {
   const [state, action, pending] = useActionState(login, undefined);
   const theme = useSyncExternalStore(subscribeThemeColor, getThemeColor, getServerThemeColor);
   const ACCENT = theme.solid;
 
   return (
     <form action={action} className="flex flex-col gap-6">
+      <input type="hidden" name="next" value={next} />
       <div className="flex flex-col gap-1.5">
         <h1 className="font-[family-name:var(--font-display)] text-2xl font-bold tracking-tight text-(--text)">
           Welcome back

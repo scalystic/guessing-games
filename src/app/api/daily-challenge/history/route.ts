@@ -1,13 +1,8 @@
 import { prisma } from "@/lib/db";
-import { ensurePlayer } from "@/lib/guest";
+import { getExistingPlayerId } from "@/lib/guest";
 import { jsonError, jsonOk, internalErrorJson } from "@/lib/api/response";
 
 export const dynamic = "force-dynamic";
-
-function clientIp(request: Request): string | null {
-  const forwarded = request.headers.get("x-forwarded-for");
-  return forwarded?.split(",")[0]?.trim() ?? null;
-}
 
 function shiftDayKey(dayKey: string, deltaDays: number): string {
   const [y, m, d] = dayKey.split("-").map(Number);
@@ -55,10 +50,15 @@ export async function GET(request: Request): Promise<Response> {
       dayKeys = Array.from({ length: days }, (_, i) => shiftDayKey(todayKey, -(days - 1 - i)));
     }
 
-    const { playerId } = await ensurePlayer(clientIp(request));
+    // Read-only: never mints a guest. See the note on the /today route — three
+    // concurrent GETs each provisioning their own player is what split one
+    // visitor across several Player rows and left played days unchecked.
+    const playerId = await getExistingPlayerId();
 
     const [runs, challenges] = await Promise.all([
-      prisma.run.findMany({
+      playerId === null
+        ? []
+        : prisma.run.findMany({
         where: { playerId, gameId: game.id, mode: "DAILY", dayKey: { in: dayKeys } },
         select: { dayKey: true, rounds: { select: { attemptsUsed: true } } },
       }),

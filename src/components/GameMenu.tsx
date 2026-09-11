@@ -86,6 +86,11 @@ export type GameMenuItem = {
   href?: string;
   badge?: string;
   primary?: boolean;
+  /// Renders the row greyed out and inert — still listed so players know the
+  /// mode exists, but it can't be opened. Suppresses `href`/`onClick` entirely
+  /// rather than relying on styling, so keyboard and screen-reader users hit
+  /// the same wall as mouse users.
+  disabled?: boolean;
 };
 
 const ROW_CLASS = "flex w-full items-center gap-3 rounded-[8px] px-2.5 py-2 text-left transition-colors duration-200";
@@ -98,33 +103,52 @@ function MenuRow({
   href,
   badge,
   primary,
+  disabled,
 }: GameMenuItem & { onClick?: () => void }) {
   const className = `${ROW_CLASS} ${
-    primary
-      ? "bg-(--signal) text-(--signal-ink) hover:bg-[#ffd071]"
-      : "text-(--text-dim) hover:bg-(--surface-hover) hover:text-(--text)"
+    disabled
+      ? "cursor-not-allowed text-(--text-faint) opacity-60"
+      : primary
+        ? "bg-(--signal) text-(--signal-ink) hover:bg-[#ffd071]"
+        : "text-(--text-dim) hover:bg-(--surface-hover) hover:text-(--text)"
   }`;
+
+  const highlighted = primary && !disabled;
 
   const body = (
     <>
-      <span className={primary ? "shrink-0" : "shrink-0 text-(--text-faint)"}>{ICONS[icon]}</span>
+      <span className={highlighted ? "shrink-0" : "shrink-0 text-(--text-faint)"}>{ICONS[icon]}</span>
       <span className="min-w-0 flex-1">
         <span className="block text-sm font-semibold leading-tight">{label}</span>
         <span
           className={`mt-0.5 block truncate text-[11px] leading-tight ${
-            primary ? "opacity-70" : "text-(--text-faint)"
+            highlighted ? "opacity-70" : "text-(--text-faint)"
           }`}
         >
           {hint}
         </span>
       </span>
       {badge ? (
-        <span className="shrink-0 rounded-full bg-(--miss) px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-[0.05em] text-white">
+        <span
+          className={`shrink-0 rounded-full px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-[0.05em] ${
+            disabled
+              ? "border border-(--hairline) text-(--text-faint)"
+              : "bg-(--miss) text-white"
+          }`}
+        >
           {badge}
         </span>
       ) : null}
     </>
   );
+
+  if (disabled) {
+    return (
+      <div className={className} aria-disabled="true">
+        {body}
+      </div>
+    );
+  }
 
   return href ? (
     <Link href={href} onClick={onClick} className={className}>
@@ -192,8 +216,9 @@ export function GameMenu({ user, items }: Props) {
         <MenuBarsIcon />
         <span className="hidden sm:inline">Menu</span>
         {/* Multiplayer used to carry its own "New" badge out here; a dot keeps
-            that discoverability without a second button. */}
-        {items.some((item) => item.badge) ? (
+            that discoverability without a second button. Disabled rows are
+            skipped — a coming-soon mode is not something to ping about. */}
+        {items.some((item) => item.badge && !item.disabled) ? (
           <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-(--miss)" aria-hidden="true" />
         ) : null}
       </button>

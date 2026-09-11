@@ -16,8 +16,12 @@ import { absoluteUrl, GAME_PAGES } from "@/lib/site";
 ///
 ///   - "/" — it 307s to /sargam (see src/app/page.tsx). Listing a redirect is
 ///     a sitemap error in Search Console, and the destination is already here.
+///   - /play/daily — also a 307 to /sargam now that the daily challenge *is*
+///     /sargam. It used to be listed in its own right, when it was a second
+///     mode on its own URL.
 ///   - /login, /signup — noindex; nothing to rank for.
 ///   - /multiplayer/room/[code] — ephemeral, invite-only, noindex.
+///   - /sargam/testing/practice — the internal practice run, noindex.
 ///   - /games/[slug] — the legacy config view, noindex, and it would compete
 ///     with /sargam for the same game.
 
@@ -43,14 +47,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 1,
   }));
 
-  const dailyEntry: MetadataRoute.Sitemap = [
-    {
-      url: absoluteUrl("/play/daily"),
-      changeFrequency: "daily",
-      priority: 0.8,
-    },
-  ];
-
   const legalEntries: MetadataRoute.Sitemap = [
     // The index first, then the five documents in the same reading order the
     // footer uses.
@@ -67,5 +63,5 @@ export default function sitemap(): MetadataRoute.Sitemap {
     changeFrequency: "monthly" as const,
   }));
 
-  return [...gameEntries, ...dailyEntry, ...legalEntries];
+  return [...gameEntries, ...legalEntries];
 }

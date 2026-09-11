@@ -24,6 +24,15 @@ type Props = {
 const POSTER_WIDTH = 1080;
 const POSTER_HEIGHT = 1350;
 
+/// Where a shared poster or invite sends people.
+///
+/// /sargam, not the /play/daily this used to print: the daily challenge is the
+/// game now, and it lives on the game's own URL. /play/daily still 307s here,
+/// so posters already out in the world keep working — but a link printed onto
+/// an image is the last place you want a redirect hop, and this is also the
+/// shorter string to read off a screenshot.
+const DAILY_PATH = "/sargam";
+
 function posterDay(dayKey: string) {
   const [year, month, day] = dayKey.split("-").map(Number);
   return new Date(year, month - 1, day).toLocaleDateString("en-IN", {
@@ -220,7 +229,7 @@ async function renderPoster(props: Props): Promise<Blob> {
   context.font = '700 34px "Instrument Sans", sans-serif';
   context.fillText("Can you catch today’s songs?", 126, 1182);
   context.font = '600 20px "Geist Mono", monospace';
-  drawTrackingText(context, `${new URL(SITE_URL).host}/play/daily`, 126, 1218, 1.5);
+  drawTrackingText(context, `${new URL(SITE_URL).host}${DAILY_PATH}`, 126, 1218, 1.5);
 
   // Drawn play button rather than the "▶" glyph, which rendered as whatever
   // fallback font the device happened to have.
@@ -265,10 +274,103 @@ function InviteIcon() {
   );
 }
 
-export function DailySharePoster(props: Props) {
-  const [status, setStatus] = useState<string | null>(null);
+/// The poster the share button hands over, rendered on screen so the player
+/// sees what they are about to send. Same numbers as the canvas, via
+/// posterRows() — the two can’t drift.
+function PosterPreview(props: Props) {
   const perfect = props.roundsSolved === props.roundCount;
   const rows = posterRows(props);
+
+  return (
+    <div className="overflow-hidden rounded-[24px] border border-[#343b51] bg-[#151a2b] text-left text-[#f4ecdd] shadow-[0_30px_70px_-38px_rgba(9,12,21,0.9)]">
+      <div className="relative aspect-4/5 overflow-hidden p-6 sm:p-8">
+        <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-[#f2b84b]/15 blur-3xl" aria-hidden="true" />
+        <div className="relative flex h-full flex-col">
+          <header className="flex items-start justify-between gap-4 border-b border-[#343b51] pb-5">
+            <div className="border-l-[5px] border-[#f2b84b] pl-3">
+              <p className="font-[family-name:var(--font-display)] text-2xl font-bold leading-none tracking-[-0.02em]">Sargam</p>
+              <p className="mt-1 font-mono text-[8px] font-semibold uppercase tracking-[0.25em] text-[#a2a8b8]">Daily signal</p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs font-semibold">{posterDay(props.dayKey)}</p>
+              <p className="mt-1 font-mono text-[7px] uppercase tracking-[0.16em] text-[#939aae]">Same songs. One day.</p>
+            </div>
+          </header>
+
+          <div className="py-4 sm:py-5">
+            <p id="share-result-title" className="font-[family-name:var(--font-display)] text-lg font-semibold leading-tight sm:text-2xl">
+              {perfect ? "Every signal found." : "Today’s frequency report."}
+            </p>
+            <div className="mt-3 flex items-end justify-between gap-4">
+              <p className="font-[family-name:var(--font-display)] text-6xl font-bold leading-none tracking-[-0.06em] text-[#f2b84b] sm:text-7xl">
+                {props.rank === null ? "—" : `#${props.rank}`}
+                {props.rank !== null && props.totalPlayers !== null ? (
+                  <span className="ml-2 text-xl font-medium tracking-normal text-[#939aae] sm:text-2xl">
+                    of {props.totalPlayers.toLocaleString("en-IN")}
+                  </span>
+                ) : null}
+              </p>
+              <p className="font-[family-name:var(--font-display)] text-3xl font-bold leading-none tabular-nums sm:text-4xl">
+                {props.score.toLocaleString("en-IN")}
+              </p>
+            </div>
+            <div className="mt-2 flex items-baseline justify-between gap-4 font-mono text-[8px] font-semibold uppercase tracking-[0.2em] text-[#939aae]">
+              <span>Today’s rank</span>
+              <span>Total score</span>
+            </div>
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col justify-center rounded-2xl border border-[#343b51] bg-[#090c15] px-4">
+            {rows.map((row) => (
+              <div
+                key={row.label}
+                className="flex flex-1 items-center justify-between gap-3 border-b border-[#343b51]/60 last:border-0"
+              >
+                <span className="font-mono text-[8px] font-semibold uppercase tracking-[0.18em] text-[#939aae]">
+                  {row.label}
+                </span>
+                <span
+                  className="font-[family-name:var(--font-display)] text-3xl font-bold leading-none tabular-nums sm:text-4xl"
+                  style={{ color: row.accent ? "#f2b84b" : "#f4ecdd" }}
+                >
+                  {row.value}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 flex items-center justify-between gap-4 rounded-xl bg-[#f2b84b] px-4 py-3 text-[#241706]">
+            <div>
+              <p className="font-mono text-[7px] font-semibold uppercase tracking-[0.14em] text-[#241706]/60">
+                Play the daily challenge
+              </p>
+              <p className="mt-0.5 text-sm font-bold">Can you catch today’s songs?</p>
+              <p className="mt-0.5 font-mono text-[7px] font-semibold tracking-[0.06em]">
+                {new URL(SITE_URL).host}{DAILY_PATH}
+              </p>
+            </div>
+            {/* Drawn, not the "▶" glyph — that rendered as whatever fallback
+                font the device had. */}
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#241706]" aria-hidden="true">
+              <svg width="12" height="14" viewBox="0 0 12 14" fill="#f2b84b" aria-hidden="true">
+                <path d="M0 0l12 7-12 7z" />
+              </svg>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function DailySharePoster(props: Props) {
+  const [status, setStatus] = useState<string | null>(null);
+  /// The preview card is the poster the share button hands over, so there's no
+  /// reason to print it on the completion screen before anyone asks for it.
+  /// Pressing Share reveals it — on desktop, where the browser can only drop a
+  /// PNG in the downloads folder, that reveal is the only confirmation of what
+  /// was just saved.
+  const [posterVisible, setPosterVisible] = useState(false);
 
   async function posterFile() {
     const blob = await renderPoster(props);
@@ -288,8 +390,9 @@ export function DailySharePoster(props: Props) {
   }
 
   async function handleShare() {
+    setPosterVisible(true);
     setStatus("Preparing your poster…");
-    const shareUrl = `${window.location.origin}/play/daily`;
+    const shareUrl = `${window.location.origin}${DAILY_PATH}`;
     const caption = `I found ${props.roundsSolved}/${props.roundCount} songs and scored ${props.score.toLocaleString("en-IN")} in today's Sargam Daily. Can you beat it?\n${shareUrl}`;
 
     try {
@@ -324,7 +427,7 @@ export function DailySharePoster(props: Props) {
   /// Invite is the link on its own — no result, no image. It's for pulling
   /// someone into today's challenge, not for showing them how you did.
   async function handleInvite() {
-    const shareUrl = `${window.location.origin}/play/daily`;
+    const shareUrl = `${window.location.origin}${DAILY_PATH}`;
     const text = `Today's Sargam daily challenge — ${props.roundCount} songs, fifteen seconds each. Think you can beat me?`;
 
     try {
@@ -345,87 +448,10 @@ export function DailySharePoster(props: Props) {
   }
 
   return (
-    <section className="w-full max-w-[460px]" aria-labelledby="share-result-title">
-      <div className="overflow-hidden rounded-[24px] border border-[#343b51] bg-[#151a2b] text-left text-[#f4ecdd] shadow-[0_30px_70px_-38px_rgba(9,12,21,0.9)]">
-        <div className="relative aspect-4/5 overflow-hidden p-6 sm:p-8">
-          <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-[#f2b84b]/15 blur-3xl" aria-hidden="true" />
-          <div className="relative flex h-full flex-col">
-            <header className="flex items-start justify-between gap-4 border-b border-[#343b51] pb-5">
-              <div className="border-l-[5px] border-[#f2b84b] pl-3">
-                <p className="font-[family-name:var(--font-display)] text-2xl font-bold leading-none tracking-[-0.02em]">Sargam</p>
-                <p className="mt-1 font-mono text-[8px] font-semibold uppercase tracking-[0.25em] text-[#a2a8b8]">Daily signal</p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs font-semibold">{posterDay(props.dayKey)}</p>
-                <p className="mt-1 font-mono text-[7px] uppercase tracking-[0.16em] text-[#939aae]">Same songs. One day.</p>
-              </div>
-            </header>
+    <section className="w-full max-w-[460px]" aria-label="Share today’s result">
+      {posterVisible ? <PosterPreview {...props} /> : null}
 
-            <div className="py-4 sm:py-5">
-              <p id="share-result-title" className="font-[family-name:var(--font-display)] text-lg font-semibold leading-tight sm:text-2xl">
-                {perfect ? "Every signal found." : "Today’s frequency report."}
-              </p>
-              <div className="mt-3 flex items-end justify-between gap-4">
-                <p className="font-[family-name:var(--font-display)] text-6xl font-bold leading-none tracking-[-0.06em] text-[#f2b84b] sm:text-7xl">
-                  {props.rank === null ? "—" : `#${props.rank}`}
-                  {props.rank !== null && props.totalPlayers !== null ? (
-                    <span className="ml-2 text-xl font-medium tracking-normal text-[#939aae] sm:text-2xl">
-                      of {props.totalPlayers.toLocaleString("en-IN")}
-                    </span>
-                  ) : null}
-                </p>
-                <p className="font-[family-name:var(--font-display)] text-3xl font-bold leading-none tabular-nums sm:text-4xl">
-                  {props.score.toLocaleString("en-IN")}
-                </p>
-              </div>
-              <div className="mt-2 flex items-baseline justify-between gap-4 font-mono text-[8px] font-semibold uppercase tracking-[0.2em] text-[#939aae]">
-                <span>Today’s rank</span>
-                <span>Total score</span>
-              </div>
-            </div>
-
-            <div className="flex min-h-0 flex-1 flex-col justify-center rounded-2xl border border-[#343b51] bg-[#090c15] px-4">
-              {rows.map((row) => (
-                <div
-                  key={row.label}
-                  className="flex flex-1 items-center justify-between gap-3 border-b border-[#343b51]/60 last:border-0"
-                >
-                  <span className="font-mono text-[8px] font-semibold uppercase tracking-[0.18em] text-[#939aae]">
-                    {row.label}
-                  </span>
-                  <span
-                    className="font-[family-name:var(--font-display)] text-3xl font-bold leading-none tabular-nums sm:text-4xl"
-                    style={{ color: row.accent ? "#f2b84b" : "#f4ecdd" }}
-                  >
-                    {row.value}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-4 flex items-center justify-between gap-4 rounded-xl bg-[#f2b84b] px-4 py-3 text-[#241706]">
-              <div>
-                <p className="font-mono text-[7px] font-semibold uppercase tracking-[0.14em] text-[#241706]/60">
-                  Play the daily challenge
-                </p>
-                <p className="mt-0.5 text-sm font-bold">Can you catch today’s songs?</p>
-                <p className="mt-0.5 font-mono text-[7px] font-semibold tracking-[0.06em]">
-                  {new URL(SITE_URL).host}/play/daily
-                </p>
-              </div>
-              {/* Drawn, not the "▶" glyph — that rendered as whatever fallback
-                  font the device had. */}
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#241706]" aria-hidden="true">
-                <svg width="12" height="14" viewBox="0 0 12 14" fill="#f2b84b" aria-hidden="true">
-                  <path d="M0 0l12 7-12 7z" />
-                </svg>
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-2">
+      <div className={`grid grid-cols-2 gap-2 ${posterVisible ? "mt-4" : ""}`}>
         <button
           type="button"
           onClick={() => void handleShare()}

@@ -965,9 +965,10 @@ export function PlayerBar({
         </div>
       </div>
 
-      {/* Equal outer columns keep the transport control physically centered,
-          regardless of how wide the duration or VU meter becomes. */}
-      <div className="mt-3.5 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-t border-[#2d3447] pt-3.5 [@media(max-height:820px)]:mt-2.5 [@media(max-height:820px)]:pt-2.5 sm:mt-5 sm:pt-5">
+      {/* The left column takes only the width its duration readout needs, so the
+          transport control sits on the seam BETWEEN the two panels rather than
+          at the deck's geometric centre. */}
+      <div className="mt-3.5 grid grid-cols-[auto_auto_minmax(0,1fr)] items-center border-t border-[#2d3447] pt-3.5 [@media(max-height:820px)]:mt-2.5 [@media(max-height:820px)]:pt-2.5 sm:mt-5 sm:pt-5">
         <div className="min-w-0 pr-3 sm:pr-5">
           <p className="font-[family-name:var(--font-display)] text-[1.65rem] font-semibold leading-none tracking-[-0.035em] text-[#f2e9d8] sm:text-3xl">
             {formatDuration(revealMs)}
@@ -1007,7 +1008,7 @@ export function PlayerBar({
           )}
         </button>
 
-        <div className="min-w-0 border-l border-[#343b51] pl-3 sm:flex sm:items-center sm:gap-3 sm:pl-5">
+        <div className="min-w-0 pl-3 sm:flex sm:items-center sm:gap-3 sm:pl-5">
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold leading-4 text-[#f2e9d8] sm:text-sm">
               {loading

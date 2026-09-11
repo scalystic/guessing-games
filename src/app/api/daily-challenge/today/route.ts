@@ -1,19 +1,24 @@
 import { prisma } from "@/lib/db";
-import { ensurePlayer } from "@/lib/guest";
+import { getExistingPlayerId } from "@/lib/guest";
 import { jsonError, jsonOk, internalErrorJson } from "@/lib/api/response";
 
 export const dynamic = "force-dynamic";
-
-function clientIp(request: Request): string | null {
-  const forwarded = request.headers.get("x-forwarded-for");
-  return forwarded?.split(",")[0]?.trim() ?? null;
-}
 
 /**
  * GET /api/daily-challenge/today?gameSlug=<slug>
  *
  * Returns today's published daily challenge info. Also returns whether the
  * current player has already started a run for it.
+ *
+ * Reads the identity, never mints one — getExistingPlayerId, not ensurePlayer.
+ * A GET that provisions a guest is a write, and this one raced: the daily page
+ * fires this, /history and /leaderboard at the same moment, so on a first
+ * visit all three found no cookie, each created its own Player, and each set
+ * its own session cookie. One of those cookies won at random, which left the
+ * run, the name and the history belonging to three different players — the
+ * board row showing "Player" with no name, and a played day that never
+ * checked. Minting belongs to the POSTs (see /api/runs), which arrive one at
+ * a time.
  */
 export async function GET(request: Request): Promise<Response> {
   try {
@@ -45,7 +50,9 @@ export async function GET(request: Request): Promise<Response> {
       return jsonError(404, "no_challenge_today", "No daily challenge for today.");
     }
 
-    const { playerId } = await ensurePlayer(clientIp(request));
+    // No session yet means no runs yet, so there is nothing to look up and
+    // "not played" is the right answer.
+    const playerId = await getExistingPlayerId();
 
     // Matched on dayKey, not dailyChallengeId — the same reasoning as the
     // POST /api/runs "existing run" check: dailyChallengeId is
@@ -55,7 +62,7 @@ export async function GET(request: Request): Promise<Response> {
     // @@unique([playerId, gameId, dayKey]). Reporting alreadyPlayed: false in
     // that case renders the game screen for a run that /api/runs will then
     // reject with 409 the moment it tries to start.
-    const existingRun = await prisma.run.findFirst({
+    const existingRun = playerId === null ? null : await prisma.run.findFirst({
       where: { playerId, gameId: game.id, dayKey: todayKey },
       select: {
         id: true,

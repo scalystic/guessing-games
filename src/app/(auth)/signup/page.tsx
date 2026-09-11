@@ -11,6 +11,8 @@ export const metadata: Metadata = {
   robots: { index: false, follow: true },
 };
 
-export default function SignupPage() {
-  return <SignupForm />;
+export default async function SignupPage({ searchParams }: PageProps<"/signup">) {
+  const params = await searchParams;
+  const next = typeof params.next === "string" ? params.next : "/";
+  return <SignupForm next={next} />;
 }

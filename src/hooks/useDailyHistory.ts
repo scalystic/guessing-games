@@ -31,7 +31,13 @@ function streakFrom(days: DailyDay[]): number {
 /// pill and the week strip below the game so the two can't disagree — and so
 /// the same page doesn't hit the endpoint twice. Pulls a month-deep window
 /// because a 7-day window would cap the streak count at 7.
-export function useDailyHistory(gameSlug: string, windowDays = 30) {
+///
+/// `reloadKey` refetches when it changes. Without it this fetched once on
+/// mount and never again, which meant finishing today's challenge left both
+/// readers showing the state from *before* the run: today unchecked in the
+/// week strip, and a streak pill one day short. The day you just played is the
+/// one day you look for, so pass the run's completion in here.
+export function useDailyHistory(gameSlug: string, reloadKey: unknown = null, windowDays = 30) {
   const [days, setDays] = useState<DailyDay[] | null>(null);
 
   useEffect(() => {
@@ -45,7 +51,9 @@ export function useDailyHistory(gameSlug: string, windowDays = 30) {
     return () => {
       cancelled = true;
     };
-  }, [gameSlug, windowDays]);
+    // reloadKey is a refetch trigger, not a request input — the dependency
+    // list is the only thing that reads it.
+  }, [gameSlug, windowDays, reloadKey]);
 
   return useMemo(
     () => ({

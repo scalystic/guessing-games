@@ -12,7 +12,7 @@ type Entry = {
 
 type LeaderboardData = {
   entries: Entry[];
-  you: { rank: number; score: number } | null;
+  you: { rank: number; score: number; displayName: string | null } | null;
 };
 
 const MEDALS = ["🥇", "🥈", "🥉"];
@@ -87,7 +87,16 @@ export function Leaderboard({ dayKey, accent }: { dayKey: string; accent: string
           <div className="my-1 border-t border-dashed border-(--hairline)" />
           <ul>
             <LeaderboardRow
-              entry={{ rank: you.rank, playerId: "you", displayName: "You", score: you.score, isYou: true }}
+              entry={{
+                rank: you.rank,
+                playerId: "you",
+                // Same fallback the board route applies to every other row, so
+                // an unnamed player reads "Player (You)" here and "Player"
+                // to everyone else — not two different labels for one person.
+                displayName: you.displayName ?? "Player",
+                score: you.score,
+                isYou: true,
+              }}
               accent={accent}
             />
           </ul>
@@ -113,6 +122,9 @@ function LeaderboardRow({ entry, accent }: { entry: Entry; accent: string }) {
       <span className="w-6 shrink-0 text-center text-sm font-bold text-(--text-faint)">
         {MEDALS[entry.rank - 1] ?? `#${entry.rank}`}
       </span>
+      {/* Initial of the name, for your own row too. It used to be a hardcoded
+          "Y" to match a hardcoded "You" — so a player who had just set a name
+          saw neither their initial nor their name anywhere on the board. */}
       <span
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold"
         style={{
@@ -120,10 +132,22 @@ function LeaderboardRow({ entry, accent }: { entry: Entry; accent: string }) {
           color: entry.isYou ? "#000" : "var(--text-dim)",
         }}
       >
-        {(entry.isYou ? "Y" : entry.displayName)[0]?.toUpperCase()}
+        {entry.displayName[0]?.toUpperCase()}
       </span>
-      <span className="min-w-0 flex-1 truncate text-sm font-medium text-(--text)">
-        {entry.isYou ? "You" : entry.displayName}
+      {/* "<name> (You)", not "You": the row is already tinted and outlined in
+          the accent, so it does not need the label to identify itself — and
+          replacing the name with "You" hid the one thing a player looks for
+          after setting it. The marker stays a separate muted span so the name
+          truncates on its own when it's long. */}
+      <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+        <span className="truncate text-sm font-medium text-(--text)">
+          {entry.displayName}
+        </span>
+        {entry.isYou ? (
+          <span className="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-(--text-faint)">
+            (You)
+          </span>
+        ) : null}
       </span>
       <span className="shrink-0 text-sm font-bold text-(--text)">
         {entry.score.toLocaleString()}

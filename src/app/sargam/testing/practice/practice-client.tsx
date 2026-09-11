@@ -353,7 +353,7 @@ function TodaysChallengeModal({
               </div>
             ) : (
               <Link
-                href="/play/daily"
+                href="/sargam"
                 onClick={onClose}
                 className="block w-full rounded-xl bg-(--signal) px-4 py-3 text-center text-sm font-bold text-(--signal-ink) shadow-sm transition hover:bg-[#ffd071]"
               >
@@ -367,7 +367,9 @@ function TodaysChallengeModal({
   );
 }
 
-export default function Sargam({ user, game: config }: { user: CurrentUser; game: GameDetail }) {
+/// The practice run. Reachable only at /sargam/testing/practice — see the note
+/// in page.tsx for why it is an internal surface rather than a shipped mode.
+export default function Practice({ user, game: config }: { user: CurrentUser; game: GameDetail }) {
   const [showHelp, setShowHelp] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showAuthGate, setShowAuthGate] = useState(false);
@@ -433,7 +435,10 @@ export default function Sargam({ user, game: config }: { user: CurrentUser; game
   return (
     <div className="page-backdrop min-h-full text-(--text)">
       <div className="mx-auto flex w-full max-w-[760px] flex-col px-4 pb-12 pt-3.5 [@media(max-height:820px)]:pt-2 sm:px-6 sm:pb-16 sm:pt-5">
-        <GameHeader subtitle="The fifteen-second song game">
+        {/* Says "testing" in the one place you always see, so this screen can't
+            be mistaken for the live game — it is the same deck, but the run it
+            starts is PRACTICE and counts for nothing. */}
+        <GameHeader subtitle="Practice · testing">
           {/* Streak reads from the header row instead of its own band above the
               deck — same reason as the daily page: the game has to clear the
               fold. Tapping it opens the full session stats. */}
@@ -446,13 +451,14 @@ export default function Sargam({ user, game: config }: { user: CurrentUser; game
           <GameMenu
             user={user}
             items={[
+              // Held back for now — listed so players know the mode is coming,
+              // but it does not open the picker. See daily-client.tsx.
               {
                 icon: "multiplayer",
                 label: "Multiplayer",
                 hint: "Play a room with friends",
-                badge: "New",
-                primary: true,
-                onClick: () => setShowMultiplayer(true),
+                badge: "Soon",
+                disabled: true,
               },
               {
                 icon: "daily",
@@ -611,7 +617,7 @@ export default function Sargam({ user, game: config }: { user: CurrentUser; game
 
         <footer className="mt-8 flex items-center justify-between gap-4 border-t border-(--hairline) pt-4 text-xs text-(--text-faint)">
           <p>One clip. Six attempts. No rewinds beyond what you unlock.</p>
-          <p className="shrink-0 font-mono uppercase tracking-[0.12em]">v1 · Practice</p>
+          <p className="shrink-0 font-mono uppercase tracking-[0.12em]">v1 · Practice · Testing</p>
         </footer>
       </div>
 
