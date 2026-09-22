@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { getExistingPlayerId } from "@/lib/guest";
 import { jsonError, jsonOk, internalErrorJson } from "@/lib/api/response";
+import { countDailyChallengeRounds } from "@/lib/game/daily-selection";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +51,14 @@ export async function GET(request: Request): Promise<Response> {
       return jsonError(404, "no_challenge_today", "No daily challenge for today.");
     }
 
+    // The board's "ROUND n/N" total. NOT challenge.roundCount: that is a frozen
+    // copy of the list length at creation time and counts entries the run can't
+    // play (no video, or a song the admin picked twice — see daily-selection).
+    // The run's maxRounds comes from the same helper, so this is the number the
+    // run actually ends on; reading roundCount showed "ROUND 69/72" and then
+    // completed, which reads as a game that broke three songs early.
+    const roundCount = await countDailyChallengeRounds(challenge.id);
+
     // No session yet means no runs yet, so there is nothing to look up and
     // "not played" is the right answer.
     const playerId = await getExistingPlayerId();
@@ -82,17 +91,26 @@ export async function GET(request: Request): Promise<Response> {
     const hasGuesses = existingRun !== null &&
       existingRun.rounds.some((r) => r.attemptsUsed > 0);
 
+    // ...and only once that run is OVER. `alreadyPlayed` is what makes the page
+    // render the recap panel instead of the board, so reporting it for a run
+    // that is still IN_PROGRESS meant a mid-game refresh ended the challenge:
+    // the run was alive, its token was still in localStorage, and the player was
+    // shown "you already played" at song 5 of 69 with no way back in. Over 69
+    // songs a reload is not an edge case. A live run resumes (the client has
+    // GET /api/runs/[runId] for exactly that); only a finished one is a recap.
+    const isOver = hasGuesses && existingRun.status !== "IN_PROGRESS";
+
     return jsonOk({
       id: challenge.id,
       title: challenge.title,
       dayKey: challenge.dayKey,
-      roundCount: challenge.roundCount,
+      roundCount,
       rewardCoins: challenge.rewardCoins,
       rewardXp: challenge.rewardXp,
-      alreadyPlayed: hasGuesses,
+      alreadyPlayed: isOver,
       runStatus: hasGuesses ? (existingRun?.status ?? null) : null,
       result:
-        hasGuesses && existingRun?.status === "COMPLETED"
+        isOver && existingRun?.status === "COMPLETED"
           ? {
               score: existingRun.score,
               roundsSolved: existingRun.roundsSolved,

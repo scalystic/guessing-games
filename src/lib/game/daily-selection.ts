@@ -10,12 +10,18 @@ import { prisma } from "@/lib/db";
 /// out). No seed shuffling and no catalog-wide walk — those made the daily play
 /// songs nobody picked and ignored the curated list entirely.
 ///
-/// The only entry that gets dropped is one with nothing to stream
-/// (`Song.externalId IS NULL`) — a round with no video is a dead round. Entries
-/// are otherwise played as picked; isActive/isLocked are admin-side catalog flags
-/// and an explicit pick outranks them.
+/// Two kinds of entry get dropped:
 ///
-/// Because a dropped entry would leave a hole in `roundIndex`, positions are
+///   - nothing to stream (`Song.externalId IS NULL`) — a round with no video is
+///     a dead round. Entries are otherwise played as picked; isActive/isLocked
+///     are admin-side catalog flags and an explicit pick outranks them.
+///   - a song already picked earlier in the same list. `RunRound` is UNIQUE on
+///     (runId, puzzleId), so a repeat is not "play it twice", it is a 500 that
+///     kills the run mid-game — which is exactly what the 72-song Sargam list
+///     did at song 43 (it lists three songs twice). First occurrence wins; the
+///     repeat is dropped, and the run is as long as the DISTINCT list.
+///
+/// Because a dropped entry leaves a hole in `roundIndex`, positions are
 /// re-numbered with ROW_NUMBER over the surviving entries. That is what the run's
 /// round index addresses, so rounds are always 1..N with no gaps.
 
@@ -29,7 +35,7 @@ export async function countDailyChallengeRounds(
   db: RawExecutor = prisma,
 ): Promise<number> {
   const rows = await db.$queryRaw<{ n: number }[]>`
-    SELECT count(*)::int AS n
+    SELECT count(DISTINCT d."puzzleId")::int AS n
     FROM "DailyChallengePuzzle" d
     JOIN "Song" s ON s."puzzleId" = d."puzzleId"
     WHERE d."dailyChallengeId" = ${dailyChallengeId}
@@ -55,6 +61,17 @@ export async function dailyPuzzleAt(
   const rows = await db.$queryRaw<
     { id: string; popularity: number; external_id: string; hook_start_ms: number }[]
   >`
+    WITH picks AS (
+      -- One row per song, at the earliest roundIndex the admin gave it.
+      SELECT DISTINCT ON (d."puzzleId")
+        d."puzzleId",
+        d."roundIndex"
+      FROM "DailyChallengePuzzle" d
+      JOIN "Song" s ON s."puzzleId" = d."puzzleId"
+      WHERE d."dailyChallengeId" = ${args.dailyChallengeId}
+        AND s."externalId" IS NOT NULL
+      ORDER BY d."puzzleId", d."roundIndex"
+    )
     SELECT id, popularity, external_id, hook_start_ms
     FROM (
       SELECT
@@ -62,12 +79,10 @@ export async function dailyPuzzleAt(
         p.popularity,
         s."externalId"               AS external_id,
         COALESCE(s."hookStartMs", 0) AS hook_start_ms,
-        ROW_NUMBER() OVER (ORDER BY d."roundIndex") AS position
-      FROM "DailyChallengePuzzle" d
-      JOIN "Puzzle" p ON p.id = d."puzzleId"
+        ROW_NUMBER() OVER (ORDER BY picks."roundIndex") AS position
+      FROM picks
+      JOIN "Puzzle" p ON p.id = picks."puzzleId"
       JOIN "Song" s ON s."puzzleId" = p.id
-      WHERE d."dailyChallengeId" = ${args.dailyChallengeId}
-        AND s."externalId" IS NOT NULL
     ) ordered
     WHERE position = ${args.position}
   `;
