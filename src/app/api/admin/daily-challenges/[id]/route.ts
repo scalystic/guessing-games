@@ -75,9 +75,8 @@ export async function GET(_: Request, ctx: Ctx): Promise<Response> {
 const UpdateSchema = z.object({
   title: z.string().max(200).nullable().optional(),
   songs: z
-    .array(z.object({ puzzleId: z.string().min(1), roundIndex: z.number().int().min(1).max(30) }))
+    .array(z.object({ puzzleId: z.string().min(1), roundIndex: z.number().int().min(1) }))
     .min(1)
-    .max(30)
     .optional(),
   rewardCoins: z.number().int().min(0).max(10_000).optional(),
   rewardXp: z.number().int().min(0).max(10_000).optional(),

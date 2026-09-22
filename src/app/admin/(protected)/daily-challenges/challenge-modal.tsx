@@ -397,7 +397,6 @@ export function ChallengeModal({ challenge, onClose, onSaved }: Props) {
                   <button
                     type="button"
                     onClick={addRound}
-                    disabled={rounds.length >= 30}
                     className="rounded-lg border border-(--hairline) px-3 py-1.5 text-xs font-medium text-(--text-dim) transition hover:bg-(--surface-hover) disabled:opacity-40"
                   >
                     + Add Round

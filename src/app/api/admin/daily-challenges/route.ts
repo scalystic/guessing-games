@@ -73,13 +73,13 @@ export async function GET(): Promise<Response> {
 
 const SongEntry = z.object({
   puzzleId: z.string().min(1),
-  roundIndex: z.number().int().min(1).max(30),
+  roundIndex: z.number().int().min(1),
 });
 
 const CreateSchema = z.object({
   title: z.string().max(200).optional(),
   dayKey: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  songs: z.array(SongEntry).min(1).max(30),
+  songs: z.array(SongEntry).min(1),
   rewardCoins: z.number().int().min(0).max(10_000).default(0),
   rewardXp: z.number().int().min(0).max(10_000).default(0),
   publishNow: z.boolean().default(false),
