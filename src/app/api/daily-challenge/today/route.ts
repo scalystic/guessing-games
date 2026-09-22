@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { getExistingPlayerId } from "@/lib/guest";
 import { jsonError, jsonOk, internalErrorJson } from "@/lib/api/response";
-import { countDailyChallengeRounds } from "@/lib/game/daily-selection";
+import { countDailyChallengeRounds, isStaleDailyRun } from "@/lib/game/daily-selection";
 
 export const dynamic = "force-dynamic";
 
@@ -76,6 +76,7 @@ export async function GET(request: Request): Promise<Response> {
       select: {
         id: true,
         status: true,
+        maxRounds: true,
         score: true,
         roundsSolved: true,
         rounds: {
@@ -98,7 +99,14 @@ export async function GET(request: Request): Promise<Response> {
     // shown "you already played" at song 5 of 69 with no way back in. Over 69
     // songs a reload is not an edge case. A live run resumes (the client has
     // GET /api/runs/[runId] for exactly that); only a finished one is a recap.
-    const isOver = hasGuesses && existingRun.status !== "IN_PROGRESS";
+    //
+    // A run dealt from a superseded song set doesn't count as today's run either:
+    // POST /api/runs archives it and deals a fresh one, so gating the board on
+    // it would show a recap for a game the player never got to play.
+    const isOver =
+      hasGuesses &&
+      existingRun.status !== "IN_PROGRESS" &&
+      !isStaleDailyRun(existingRun.maxRounds, roundCount);
 
     return jsonOk({
       id: challenge.id,

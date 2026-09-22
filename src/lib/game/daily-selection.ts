@@ -44,6 +44,26 @@ export async function countDailyChallengeRounds(
   return rows[0]?.n ?? 0;
 }
 
+/// Whether a run was built against a DIFFERENT song set than today's challenge
+/// now resolves to.
+///
+/// `Run.maxRounds` is frozen at start time, so it is a fingerprint of the list
+/// the run was dealt. Today's runs carry 427 (from the version that walked the
+/// whole catalog) and 72 (from the version that played duplicate picks and 500'd
+/// on the repeat). Those runs are unplayable, but @@unique([playerId, gameId,
+/// dayKey]) means each one still occupies its player's single slot for the day —
+/// so the player is shown a recap of a run that never really happened and can
+/// never start the corrected one.
+///
+/// Stale runs are archived, not deleted: the row keeps its score and rounds, it
+/// just stops owning today's slot (see archiveStaleDailyRun).
+export function isStaleDailyRun(
+  runMaxRounds: number | null,
+  currentRoundCount: number,
+): boolean {
+  return runMaxRounds !== null && runMaxRounds !== currentRoundCount;
+}
+
 export type DailyPuzzle = {
   puzzleId: string;
   popularity: number;

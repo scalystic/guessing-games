@@ -16,8 +16,15 @@
 /// still alive server-side for RUN_TTL_MINUTES, so that was a resumable run
 /// thrown away by navigation alone. `sargam.run.v1` (unsuffixed) is the old
 /// single-slot key and is deleted on the next save.
-const KEY_PREFIX = "sargam.run.v1";
-const LEGACY_KEY = KEY_PREFIX;
+/// v2, not v1, on purpose. Every browser holding a v1 daily token is holding a
+/// run dealt from a superseded song set — the catalog-wide walk, or the list
+/// that still contained the admin's duplicate picks and 500'd when it reached
+/// one. Those tokens resume a run that cannot finish, and the resume path has no
+/// way to tell (GET /api/runs/[runId] doesn't report maxRounds). Rotating the key
+/// drops them all at once: the DB rows are untouched, the browser just stops
+/// claiming to own one and starts today's corrected challenge instead.
+const KEY_PREFIX = "sargam.run.v2";
+const LEGACY_KEY = "sargam.run.v1";
 
 export type StoredRunMode = "PRACTICE" | "DAILY";
 
@@ -67,6 +74,10 @@ export function saveStoredRun(run: StoredRun): void {
   try {
     window.localStorage.setItem(keyFor(run.mode), JSON.stringify(run));
     window.localStorage.removeItem(LEGACY_KEY);
+    // The v1 per-mode slots too — orphaned by the key rotation above, and never
+    // read again, but there is no reason to leave them sitting in storage.
+    window.localStorage.removeItem(`${LEGACY_KEY}:PRACTICE`);
+    window.localStorage.removeItem(`${LEGACY_KEY}:DAILY`);
   } catch {
     // Private mode or a full quota. A run that can't be resumed still plays.
   }

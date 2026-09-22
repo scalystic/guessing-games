@@ -4,7 +4,11 @@ import { internalErrorJson, jsonError, jsonOk } from "@/lib/api/response";
 import { ensurePlayer } from "@/lib/guest";
 import { mintRunToken } from "@/lib/game/run-token";
 import { samplePuzzle } from "@/lib/game/selection";
-import { countDailyChallengeRounds, dailyPuzzleAt } from "@/lib/game/daily-selection";
+import {
+  countDailyChallengeRounds,
+  dailyPuzzleAt,
+  isStaleDailyRun,
+} from "@/lib/game/daily-selection";
 // YOUTUBE-ONLY: `inlineAudioFor` is retired along with the stored-clip path.
 import { randomBytes, randomUUID } from "crypto";
 
@@ -103,6 +107,7 @@ export async function POST(request: Request): Promise<Response> {
         select: {
           id: true,
           tokenHash: true,
+          maxRounds: true,
           livesRemaining: true,
           currentRoundIndex: true,
           rounds: { select: { attemptsUsed: true } },
@@ -110,14 +115,25 @@ export async function POST(request: Request): Promise<Response> {
       });
       if (existing) {
         const hasGuesses = existing.rounds.some((r) => r.attemptsUsed > 0);
-        if (hasGuesses) {
+        // A run dealt from a superseded song set is not "you already played" —
+        // it is a run that could never finish. Archive it (the row and its score
+        // survive; it just stops owning today's slot) and deal a fresh one.
+        if (hasGuesses && isStaleDailyRun(existing.maxRounds, eligibleCount)) {
+          await prisma.run.updateMany({
+            where: { id: existing.id },
+            // Suffixed with the run's own id, so a player holding several stale
+            // runs can't collide with themselves on the unique key.
+            data: { dayKey: `${todayKey}-superseded-${existing.id.slice(0, 8)}` },
+          });
+        } else if (hasGuesses) {
           return jsonError(409, "already_started", "You already have a run for today's challenge.");
+        } else {
+          // deleteMany rather than delete: a concurrent duplicate request (a
+          // second tab, a StrictMode/Fast-Refresh double-mount) can already have
+          // deleted this same row by the time this one gets here, and `delete`
+          // throws P2025 for a row that's simply already gone.
+          await prisma.run.deleteMany({ where: { id: existing.id } });
         }
-        // deleteMany rather than delete: a concurrent duplicate request (a
-        // second tab, a StrictMode/Fast-Refresh double-mount) can already have
-        // deleted this same row by the time this one gets here, and `delete`
-        // throws P2025 for a row that's simply already gone.
-        await prisma.run.deleteMany({ where: { id: existing.id } });
       }
 
       const { token, tokenHash } = mintRunToken();
