@@ -4,15 +4,18 @@ import { internalErrorJson, jsonError, jsonOk } from "@/lib/api/response";
 import { ensurePlayer } from "@/lib/guest";
 import { mintRunToken } from "@/lib/game/run-token";
 import { samplePuzzle } from "@/lib/game/selection";
+import { countDailyEligiblePuzzles, nextDailyPuzzle } from "@/lib/game/daily-selection";
 // YOUTUBE-ONLY: `inlineAudioFor` is retired along with the stored-clip path.
 import { randomBytes, randomUUID } from "crypto";
 
 /// POST /api/runs — start a run.
 ///
-/// v1 serves PRACTICE. DAILY needs a published DailyChallenge to draw its frozen
-/// puzzle set from, so it is rejected here rather than silently behaving like
-/// practice: a daily that sampled per-player would break the one property that
-/// makes the board comparable.
+/// v1 serves PRACTICE. DAILY needs a published DailyChallenge for the day — it
+/// gates whether there is a daily at all and carries the rewards/seed — but the
+/// puzzle set is no longer the challenge's hand-picked entries. A daily now runs
+/// through the WHOLE eligible catalog (see daily-selection.ts), in an order the
+/// challenge seed fixes so it is identical for every player. That keeps the board
+/// comparable without an admin curating a song list per day.
 
 export const dynamic = "force-dynamic";
 
@@ -67,41 +70,24 @@ export async function POST(request: Request): Promise<Response> {
 
       const challenge = await prisma.dailyChallenge.findFirst({
         where: { gameId: game.id, dayKey: todayKey, publishedAt: { not: null } },
-        select: {
-          id: true,
-          dayKey: true,
-          roundCount: true,
-          entries: {
-            where: { roundIndex: 1 },
-            select: {
-              puzzleId: true,
-              targetPopularity: true,
-              puzzle: {
-                select: {
-                  song: { select: { externalId: true, hookStartMs: true } },
-                  // YOUTUBE-ONLY: the first round's AUDIO_CLIP asset used to be
-                  // selected here so stage 1 could ride along with the start
-                  // response:
-                  //
-                  // assets: {
-                  //   where: { kind: "AUDIO_CLIP" as const },
-                  //   select: { storageKey: true, stageByteOffsets: true, byteSize: true, ladderRevision: true },
-                  //   take: 1,
-                  // },
-                },
-              },
-            },
-            take: 1,
-          },
-        },
+        select: { id: true, dayKey: true, seed: true },
       });
       if (!challenge) {
         return jsonError(404, "no_challenge_today", "No daily challenge is published for today.");
       }
 
-      const firstEntry = challenge.entries[0];
-      if (!firstEntry) {
-        return jsonError(500, "challenge_misconfigured", "Today's challenge has no puzzles.");
+      // The daily walks the whole eligible catalog rather than hand-picked
+      // entries: roundCount on the challenge is ignored, and maxRounds is the
+      // size of the eligible set at start time. firstEntry is the first song in
+      // the day's fixed (seed-ordered) sequence.
+      const eligibleCount = await countDailyEligiblePuzzles(game.id);
+      const firstEntry = await nextDailyPuzzle({
+        gameId: game.id,
+        seed: challenge.seed,
+        excludePuzzleIds: [],
+      });
+      if (!firstEntry || eligibleCount === 0) {
+        return jsonError(500, "challenge_misconfigured", "No eligible songs to play today.");
       }
 
       // One run per player per day — enforced by @@unique([playerId, gameId,
@@ -153,7 +139,7 @@ export async function POST(request: Request): Promise<Response> {
             VALUES (
               ${runId}, ${game.id}, ${playerId}, 'DAILY'::"RunMode",
               ${challenge.dayKey}, ${randomBytes(16).toString("hex")}, NULL,
-              ${challenge.id}, ${game.livesPerRun}, ${challenge.roundCount},
+              ${challenge.id}, ${game.livesPerRun}, ${eligibleCount},
               ${game.scoringVersion}, true,
               ${tokenHash}, ${new Date(Date.now() + RUN_TTL_MINUTES * 60 * 1000)}
             )
@@ -165,7 +151,7 @@ export async function POST(request: Request): Promise<Response> {
               "targetPopularity", "puzzlePopularity"
             )
             SELECT ${randomUUID()}, r.id, 1, ${firstEntry.puzzleId},
-                   ${firstEntry.targetPopularity ?? 0}, 0
+                   0, ${firstEntry.popularity}
             FROM r
             RETURNING id
           )
@@ -202,9 +188,8 @@ export async function POST(request: Request): Promise<Response> {
         return internalErrorJson("runs.start.daily", new Error("run insert returned no row"));
       }
 
-      const firstPuzzle = firstEntry.puzzle;
-      const youtubeVideoId = firstPuzzle.song?.externalId ?? null;
-      const hookStartMs = firstPuzzle.song?.hookStartMs ?? 0;
+      const youtubeVideoId = firstEntry.youtubeVideoId;
+      const hookStartMs = firstEntry.hookStartMs;
       // YOUTUBE-ONLY: was
       //   const firstAsset = firstPuzzle.assets[0] ?? null;
       //   const nextAudio = firstAsset ? await inlineAudioFor(firstAsset, 1, game.ladderRevision) : null;

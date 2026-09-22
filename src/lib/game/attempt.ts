@@ -2,6 +2,7 @@ import "server-only";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/db";
 import { samplePuzzle, type DecadeFilter } from "@/lib/game/selection";
+import { nextDailyPuzzle } from "@/lib/game/daily-selection";
 import { scoreSolvedRound, solveExtendsStreak } from "@/lib/game/scoring/v1";
 import { deriveHint, type RoundHint } from "@/lib/game/hint";
 import { runTokenMatches } from "@/lib/game/run-token";
@@ -827,21 +828,35 @@ async function resolveAndAdvance(
   let pick: NextPick | null;
 
   if (run.mode === "DAILY" && run.dailyChallengeId) {
-    const challengeRound = await tx.dailyChallengePuzzle.findUnique({
-      where: { dailyChallengeId_roundIndex: { dailyChallengeId: run.dailyChallengeId, roundIndex: nextIndex } },
-      select: {
-        puzzleId: true,
-        targetPopularity: true,
-        puzzle: { select: { song: { select: { externalId: true, hookStartMs: true } } } },
-      },
+    // The daily walks the whole eligible catalog in the challenge's fixed seed
+    // order, skipping songs this run has already played — not hand-picked
+    // DailyChallengePuzzle entries. maxRounds (checked above) still caps the run
+    // at the eligible-set size; this just resolves the next song in sequence.
+    const challenge = await tx.dailyChallenge.findUnique({
+      where: { id: run.dailyChallengeId },
+      select: { seed: true },
     });
-    pick = challengeRound
+    const played = await tx.runRound.findMany({
+      where: { runId: run.id },
+      select: { puzzleId: true },
+    });
+    const daily = challenge
+      ? await nextDailyPuzzle(
+          {
+            gameId: run.gameId,
+            seed: challenge.seed,
+            excludePuzzleIds: played.map((r) => r.puzzleId),
+          },
+          tx,
+        )
+      : null;
+    pick = daily
       ? {
-          puzzleId: challengeRound.puzzleId,
-          popularity: 0,
-          targetPopularity: challengeRound.targetPopularity ?? 0,
-          youtubeVideoId: challengeRound.puzzle.song?.externalId ?? null,
-          hookStartMs: challengeRound.puzzle.song?.hookStartMs ?? 0,
+          puzzleId: daily.puzzleId,
+          popularity: daily.popularity,
+          targetPopularity: 0,
+          youtubeVideoId: daily.youtubeVideoId,
+          hookStartMs: daily.hookStartMs,
         }
       : null;
   } else if (run.mode === "MULTIPLAYER" && run.multiplayerRoomId) {

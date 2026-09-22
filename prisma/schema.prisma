@@ -467,7 +467,6 @@ model DailyChallengePuzzle {
   puzzle         Puzzle         @relation(fields: [puzzleId], references: [id])
 
   @@id([dailyChallengeId, roundIndex])
-  @@unique([dailyChallengeId, puzzleId])
 }
 
 // ============================================================
