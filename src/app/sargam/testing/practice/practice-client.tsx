@@ -527,6 +527,10 @@ export default function Practice({ user, game: config }: { user: CurrentUser; ga
             loading={game.audioLoading || game.phase === "starting"}
             waveformSeed={`${game.runId ?? "run"}:${game.roundIndex}`}
             autoPlayToken={game.autoPlayToken}
+            // Stop the clip once a dialog takes over (checking a guess,
+            // revealing, or the result panel). Skip is excluded — it starts the
+            // longer window it unlocked.
+            halt={resolved || game.pendingAction === "guess" || game.pendingAction === "giveup"}
             onPlayRequested={awaitingTape ? () => setShowEraDialog(true) : undefined}
             promptTitle={awaitingTape ? "Load a tape to begin" : undefined}
             promptSubtitle={awaitingTape ? "Pick an era and the round starts." : undefined}

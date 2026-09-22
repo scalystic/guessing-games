@@ -533,6 +533,10 @@ function DailyGame({
             loading={game.audioLoading || game.phase === "starting"}
             waveformSeed={`${game.runId ?? "run"}:${game.roundIndex}`}
             autoPlayToken={game.autoPlayToken}
+            // Silence the clip the instant a dialog takes over: the "Checking…"
+            // / "Revealing…" overlay and the result panel. A skip is not here —
+            // it unlocks a longer window that should start playing, not stop.
+            halt={resolved || game.pendingAction === "guess" || game.pendingAction === "giveup"}
             attemptIndicator={
               <AttemptTimeline
                 guesses={game.guesses}

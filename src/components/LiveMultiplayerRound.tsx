@@ -54,6 +54,12 @@ type CurrentRoundState = {
   hookStartMs: number;
 };
 
+/// A hung request here used to leave `pendingAction` stuck on forever — Guess
+/// and Skip both disabled, the deck frozen mid-round, the only way out a page
+/// reload. The timeout aborts a request that never answers so the caller's
+/// `setPendingAction(null)` always runs and the round stays playable.
+const RUN_REQUEST_TIMEOUT_MS = 10_000;
+
 async function callRun(
   path: "guess" | "skip",
   runId: string,
@@ -65,6 +71,7 @@ async function callRun(
       method: "POST",
       headers: { Authorization: `Bearer ${runToken}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(RUN_REQUEST_TIMEOUT_MS),
     });
     const json = await res.json();
     return json?.data ?? null;
@@ -117,7 +124,10 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
   const loadRound = useCallback(async (runId: string, runToken: string, roomRound: number, generation: number) => {
     setRoundLoading(true);
     try {
-      const res = await fetch(`/api/runs/${runId}`, { headers: { Authorization: `Bearer ${runToken}` } });
+      const res = await fetch(`/api/runs/${runId}`, {
+        headers: { Authorization: `Bearer ${runToken}` },
+        signal: AbortSignal.timeout(RUN_REQUEST_TIMEOUT_MS),
+      });
       if (!res.ok || generation !== generationRef.current) return;
       const body = await res.json();
       if (generation !== generationRef.current) return;
@@ -479,6 +489,11 @@ export function LiveMultiplayerRound({ mp, roomCode, gameSlug, tagline, revealLa
                 loading={roundLoading}
                 waveformSeed={`${myRun?.runId ?? "run"}:${room?.currentRound ?? 1}`}
                 autoPlayToken={autoPlayToken}
+                // Stop the clip once this player's round is resolved (the reveal
+                // is showing) or while a guess is being checked — it must not
+                // keep playing under the dialog. Skip is excluded: it starts the
+                // longer window it just unlocked.
+                halt={roundDone || pendingAction === "guess"}
                 promptSubtitle="Everyone in the room hears the same clip."
                 attemptIndicator={
                   <AttemptTimeline

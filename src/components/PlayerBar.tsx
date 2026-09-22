@@ -31,6 +31,11 @@ type Props = {
   unlockingMs?: number | null;
   /// Bump to start the clip without a click. See the effect that consumes it.
   autoPlayToken?: number;
+  /// When true, stop any playback immediately and keep it stopped. Set by the
+  /// parent the moment a dialog takes over the screen — the "Checking…" /
+  /// "Revealing…" overlay and the result panel — so the round's clip does not
+  /// keep playing underneath it. Cleared when the next round begins.
+  halt?: boolean;
 };
 
 const BAR_COUNT = 32;
@@ -131,6 +136,7 @@ export function PlayerBar({
   attemptIndicator,
   unlockingMs = null,
   autoPlayToken = 0,
+  halt = false,
 }: Props) {
   // Stored-audio refs
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -894,6 +900,28 @@ export function PlayerBar({
   // in the middle of a listen every time the stage moved.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoPlayToken]);
+
+  /// Stop the moment a dialog takes over the screen.
+  ///
+  /// A correct guess, a give-up, and a wrong-guess check all put an overlay (and
+  /// then the result panel) in front of the board — but the round's clip was
+  /// still playing, so the tape kept running underneath, and on a give-up it
+  /// talked over the reveal the player was reading. Halting here silences both
+  /// the stored-audio element and the YouTube embed. A skip is deliberately NOT
+  /// a halt: it buys a longer window that autoPlayToken then starts.
+  useEffect(() => {
+    if (!halt) return;
+    stopPlayback();
+    stopYoutubePlayback();
+    if (ytReadyRef.current) ytPlayerRef.current?.pauseVideo();
+    // Syncing React's readout with the external player we just paused.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsPlaying(false);
+    setAwaitingAudio(false);
+  // stopPlayback/stopYoutubePlayback are redefined every render and only touch
+  // refs and stable setters; listing them would rerun this on every commit.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [halt]);
 
   const [lastUrl, setLastUrl] = useState(audioUrl);
   if (lastUrl !== audioUrl) {

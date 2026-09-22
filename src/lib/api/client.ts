@@ -33,6 +33,56 @@ export class ApiError extends Error {
   }
 }
 
+/// Every request gets a ceiling. Without one a hung request — a flaky network,
+/// a server that accepted the connection and then stalled — never rejects, so
+/// the promise behind a skip, a guess or a typeahead lookup simply never
+/// settles. On the client that leaves `pendingAction` stuck on, every button
+/// disabled, and the deck frozen on "Unlocking…" until the player reloads the
+/// page. This is the whole of the "loading just gets stuck, have to refresh"
+/// report. 10s is generous for a call that normally answers in well under one —
+/// it is a backstop against a dead request, not a latency budget.
+const REQUEST_TIMEOUT_MS = 10_000;
+
+/// fetch() with a timeout, honouring any signal the caller already passed.
+///
+/// The caller's own AbortController (the typeahead uses one to cancel a stale
+/// lookup) still works: aborting it aborts this request too. A timeout is
+/// reported as an ApiError so callers surface a real message and reset their
+/// pending state, exactly as they do for any other failed request; a caller
+/// abort is rethrown untouched so "I cancelled this" stays distinguishable
+/// from "this timed out".
+async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, REQUEST_TIMEOUT_MS);
+
+  const callerSignal = init?.signal ?? undefined;
+  const onCallerAbort = () => controller.abort();
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort();
+    else callerSignal.addEventListener("abort", onCallerAbort, { once: true });
+  }
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (cause) {
+    if (timedOut) {
+      throw new ApiError(
+        504,
+        "timeout",
+        "The server took too long to respond. Check your connection and try again.",
+      );
+    }
+    throw cause;
+  } finally {
+    clearTimeout(timer);
+    if (callerSignal) callerSignal.removeEventListener("abort", onCallerAbort);
+  }
+}
+
 /// Unwraps the { data } / { error } envelope so callers get the payload or an
 /// ApiError, never a half-parsed Response.
 async function unwrap<T>(
@@ -69,7 +119,7 @@ export async function apiGet<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(resolve(path), {
+  const response = await fetchWithTimeout(resolve(path), {
     headers: { accept: "application/json" },
     ...init,
   });
@@ -84,7 +134,7 @@ export async function apiPost<T>(
   body: unknown,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(resolve(path), {
+  const response = await fetchWithTimeout(resolve(path), {
     method: "POST",
     ...init,
     headers: {
