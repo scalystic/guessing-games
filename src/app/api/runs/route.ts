@@ -4,18 +4,16 @@ import { internalErrorJson, jsonError, jsonOk } from "@/lib/api/response";
 import { ensurePlayer } from "@/lib/guest";
 import { mintRunToken } from "@/lib/game/run-token";
 import { samplePuzzle } from "@/lib/game/selection";
-import { countDailyEligiblePuzzles, nextDailyPuzzle } from "@/lib/game/daily-selection";
+import { countDailyChallengeRounds, dailyPuzzleAt } from "@/lib/game/daily-selection";
 // YOUTUBE-ONLY: `inlineAudioFor` is retired along with the stored-clip path.
 import { randomBytes, randomUUID } from "crypto";
 
 /// POST /api/runs — start a run.
 ///
-/// v1 serves PRACTICE. DAILY needs a published DailyChallenge for the day — it
-/// gates whether there is a daily at all and carries the rewards/seed — but the
-/// puzzle set is no longer the challenge's hand-picked entries. A daily now runs
-/// through the WHOLE eligible catalog (see daily-selection.ts), in an order the
-/// challenge seed fixes so it is identical for every player. That keeps the board
-/// comparable without an admin curating a song list per day.
+/// v1 serves PRACTICE. DAILY needs a published DailyChallenge for the day: it
+/// gates whether there is a daily at all, carries the rewards, and supplies the
+/// song list. The run plays that challenge's own entries in the admin's order
+/// (see daily-selection.ts) and is exactly as long as the list.
 
 export const dynamic = "force-dynamic";
 
@@ -76,15 +74,13 @@ export async function POST(request: Request): Promise<Response> {
         return jsonError(404, "no_challenge_today", "No daily challenge is published for today.");
       }
 
-      // The daily walks the whole eligible catalog rather than hand-picked
-      // entries: roundCount on the challenge is ignored, and maxRounds is the
-      // size of the eligible set at start time. firstEntry is the first song in
-      // the day's fixed (seed-ordered) sequence.
-      const eligibleCount = await countDailyEligiblePuzzles(game.id);
-      const firstEntry = await nextDailyPuzzle({
-        gameId: game.id,
-        seed: challenge.seed,
-        excludePuzzleIds: [],
+      // The daily plays the challenge's own entries: maxRounds is how many of
+      // them are playable (not the stored roundCount, which can drift from the
+      // list), and firstEntry is the admin's first pick.
+      const eligibleCount = await countDailyChallengeRounds(challenge.id);
+      const firstEntry = await dailyPuzzleAt({
+        dailyChallengeId: challenge.id,
+        position: 1,
       });
       if (!firstEntry || eligibleCount === 0) {
         return jsonError(500, "challenge_misconfigured", "No eligible songs to play today.");

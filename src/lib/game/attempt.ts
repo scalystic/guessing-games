@@ -2,7 +2,7 @@ import "server-only";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/db";
 import { samplePuzzle, type DecadeFilter } from "@/lib/game/selection";
-import { nextDailyPuzzle } from "@/lib/game/daily-selection";
+import { dailyPuzzleAt } from "@/lib/game/daily-selection";
 import { scoreSolvedRound, solveExtendsStreak } from "@/lib/game/scoring/v1";
 import { deriveHint, type RoundHint } from "@/lib/game/hint";
 import { runTokenMatches } from "@/lib/game/run-token";
@@ -461,11 +461,17 @@ type RunMode = "DAILY" | "PRACTICE" | "ENDLESS" | "MULTIPLAYER";
 
 /// Whether running out of lives ends the run.
 ///
-/// Only DAILY, where a bounded attempt IS the format. PRACTICE, ENDLESS, and
-/// MULTIPLAYER are open-ended (or bounded by room rounds), so a life loss never
-/// terminates early; the socket handler controls the overall room lifecycle.
-function livesEndTheRun(mode: RunMode): boolean {
-  return mode === "DAILY";
+/// Nothing, currently. DAILY used to end here — a bounded attempt was the format
+/// — but a daily is now the admin's whole curated list (72 songs for the Sargam
+/// competition), and knocking a player out on their third miss ended the run at
+/// song 3 with 69 songs unplayed. Lives are still counted and still shown; they
+/// just no longer terminate. PRACTICE, ENDLESS and MULTIPLAYER were already
+/// open-ended (or bounded by room rounds); the socket handler controls the room
+/// lifecycle.
+///
+/// To restore elimination for the daily, return `mode === "DAILY"`.
+function livesEndTheRun(_mode: RunMode): boolean {
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -828,28 +834,14 @@ async function resolveAndAdvance(
   let pick: NextPick | null;
 
   if (run.mode === "DAILY" && run.dailyChallengeId) {
-    // The daily walks the whole eligible catalog in the challenge's fixed seed
-    // order, skipping songs this run has already played — not hand-picked
-    // DailyChallengePuzzle entries. maxRounds (checked above) still caps the run
-    // at the eligible-set size; this just resolves the next song in sequence.
-    const challenge = await tx.dailyChallenge.findUnique({
-      where: { id: run.dailyChallengeId },
-      select: { seed: true },
-    });
-    const played = await tx.runRound.findMany({
-      where: { runId: run.id },
-      select: { puzzleId: true },
-    });
-    const daily = challenge
-      ? await nextDailyPuzzle(
-          {
-            gameId: run.gameId,
-            seed: challenge.seed,
-            excludePuzzleIds: played.map((r) => r.puzzleId),
-          },
-          tx,
-        )
-      : null;
+    // The daily plays the challenge's DailyChallengePuzzle entries in the admin's
+    // order, so the next round is simply the next position in that list. maxRounds
+    // (checked above) caps the run at the list's length; a null here — the list
+    // ended, or an entry lost its video mid-run — completes it too.
+    const daily = await dailyPuzzleAt(
+      { dailyChallengeId: run.dailyChallengeId, position: nextIndex },
+      tx,
+    );
     pick = daily
       ? {
           puzzleId: daily.puzzleId,
