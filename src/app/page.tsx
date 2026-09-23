@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation";
 
 /// Sargam is the only game that ships today, so "/" just forwards to it. And
-/// /sargam is the daily challenge — the only mode players can reach, so this is
-/// the whole of the front door.
+/// /sargam is the unlimited run — the default mode players land on, so this is
+/// the whole of the front door. (The daily challenge lives at /sargam/daily,
+/// gated behind a "coming soon" screen — see that route.)
 ///
 /// Deliberately a 307 (redirect(), not permanentRedirect()) and deliberately a
 /// page rather than a next.config redirect:

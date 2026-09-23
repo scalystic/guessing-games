@@ -1074,7 +1074,7 @@ async function rollUpPlayerStats(tx: Tx, run: RunFacts): Promise<void> {
   await tx.$executeRaw`
     INSERT INTO "PlayerGameStat" (
       id, "playerId", "gameId",
-      "runsPlayed", "roundsPlayed", "roundsSolved",
+      "runsPlayed", "roundsPlayed", "roundsSolved", "instantSolveCount",
       "bestRunScore", "bestDailyScore", "bestRoundStreak",
       "currentDailyStreak", "longestDailyStreak", "lastPlayedDayKey",
       xp, "updatedAt"
@@ -1082,6 +1082,13 @@ async function rollUpPlayerStats(tx: Tx, run: RunFacts): Promise<void> {
     SELECT
       ${randomUUID()}, r."playerId", r."gameId",
       1, r."roundsSolved" + r."roundsFailed", r."roundsSolved",
+      -- First-attempt solves for this run only — the reveal ladder's first
+      -- stage is a 400ms clip, so attemptsUsed = 1 on a SOLVED round is
+      -- exactly "guessed in 0.4 seconds".
+      (
+        SELECT COUNT(*)::int FROM "RunRound" rr
+        WHERE rr."runId" = r.id AND rr.outcome = 'SOLVED'::"RoundOutcome" AND rr."attemptsUsed" = 1
+      ),
       r.score, CASE WHEN ${dayKey}::text IS NULL THEN 0 ELSE r.score END, r."bestStreak",
       CASE WHEN ${dayKey}::text IS NULL THEN 0 ELSE 1 END,
       CASE WHEN ${dayKey}::text IS NULL THEN 0 ELSE 1 END,
@@ -1093,6 +1100,7 @@ async function rollUpPlayerStats(tx: Tx, run: RunFacts): Promise<void> {
       "runsPlayed"     = "PlayerGameStat"."runsPlayed"   + 1,
       "roundsPlayed"   = "PlayerGameStat"."roundsPlayed" + EXCLUDED."roundsPlayed",
       "roundsSolved"   = "PlayerGameStat"."roundsSolved" + EXCLUDED."roundsSolved",
+      "instantSolveCount" = "PlayerGameStat"."instantSolveCount" + EXCLUDED."instantSolveCount",
       xp               = "PlayerGameStat".xp            + EXCLUDED.xp,
 
       "bestRunScore"    = GREATEST("PlayerGameStat"."bestRunScore",    EXCLUDED."bestRunScore"),

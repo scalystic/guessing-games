@@ -224,158 +224,15 @@ function EraDialog({
   );
 }
 
-type TodayChallenge = {
-  id: string;
-  title: string | null;
-  dayKey: string;
-  roundCount: number;
-  rewardCoins: number;
-  rewardXp: number;
-  alreadyPlayed: boolean;
-  runStatus: string | null;
-};
-
-function TodaysChallengeModal({
-  gameSlug,
-  onClose,
-}: {
-  gameSlug: string;
-  onClose: () => void;
-}) {
-  const [challenge, setChallenge] = useState<TodayChallenge | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch(`/api/daily-challenge/today?gameSlug=${encodeURIComponent(gameSlug)}`)
-      .then((r) => r.json())
-      .then((json) => {
-        if (json.data) setChallenge(json.data);
-        else setError(json.error?.message ?? "No challenge today.");
-      })
-      .catch(() => setError("Could not load today's challenge."))
-      .finally(() => setLoading(false));
-  }, [gameSlug]);
-
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [onClose]);
-
-  function formatDay(dayKey: string) {
-    const [y, m, d] = dayKey.split("-").map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString("en-IN", {
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-    });
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-(--scrim) p-4"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="challenge-modal-title"
-    >
-      <div
-        className="w-full max-w-sm rounded-[14px] border border-(--hairline) bg-(--surface-strong) p-6 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div>
-            <p className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-(--signal)">
-              Daily Challenge
-            </p>
-            <h2
-              id="challenge-modal-title"
-              className="mt-1 font-[family-name:var(--font-display)] text-2xl font-semibold leading-tight text-(--text)"
-            >
-              {loading ? "Loading…" : (challenge?.title ?? "Today's Challenge")}
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 rounded-lg p-1.5 text-(--text-faint) hover:bg-(--surface-hover) hover:text-(--text)"
-            aria-label="Close"
-          >
-            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M5 5l10 10M15 5L5 15" />
-            </svg>
-          </button>
-        </div>
-
-        {loading && (
-          <p className="py-6 text-center text-sm text-(--text-faint)">Loading…</p>
-        )}
-
-        {!loading && error && (
-          <p className="py-4 text-center text-sm text-(--text-dim)">{error}</p>
-        )}
-
-        {!loading && challenge && (
-          <>
-            <p className="mb-4 text-xs text-(--text-faint)">{formatDay(challenge.dayKey)}</p>
-
-            <div
-              className={`mb-5 grid gap-2 ${
-                challenge.rewardCoins > 0 || challenge.rewardXp > 0 ? "grid-cols-2" : "grid-cols-1"
-              }`}
-            >
-              <div className="rounded-xl border border-(--hairline) bg-(--surface) px-3 py-2.5 text-center">
-                <p className="text-xl font-bold text-(--text)">{challenge.roundCount}</p>
-                <p className="mt-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-(--text-faint)">Rounds</p>
-              </div>
-              {(challenge.rewardCoins > 0 || challenge.rewardXp > 0) && (
-                <div className="rounded-xl border border-(--hairline) bg-(--surface) px-3 py-2.5 text-center">
-                  {challenge.rewardCoins > 0 && (
-                    <p className="text-sm font-bold text-amber-500">{challenge.rewardCoins} coins</p>
-                  )}
-                  {challenge.rewardXp > 0 && (
-                    <p className="text-sm font-bold text-(--success)">{challenge.rewardXp} XP</p>
-                  )}
-                  <p className="mt-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-(--text-faint)">Rewards</p>
-                </div>
-              )}
-            </div>
-
-            {challenge.alreadyPlayed ? (
-              <div className="rounded-xl border border-(--hairline) bg-(--surface) px-4 py-3 text-center">
-                <p className="text-sm font-semibold text-(--text-dim)">
-                  {challenge.runStatus === "COMPLETED"
-                    ? "You already completed today's challenge!"
-                    : "You already started today's challenge."}
-                </p>
-              </div>
-            ) : (
-              <Link
-                href="/sargam"
-                onClick={onClose}
-                className="block w-full rounded-xl bg-(--signal) px-4 py-3 text-center text-sm font-bold text-(--signal-ink) shadow-sm transition hover:bg-[#ffd071]"
-              >
-                Play Now
-              </Link>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/// The practice run. Reachable only at /sargam/testing/practice — see the note
-/// in page.tsx for why it is an internal surface rather than a shipped mode.
+/// The unlimited run — pick an era, play rounds until you stop. This is the
+/// primary mode: /sargam renders it directly. The daily challenge (fixed set,
+/// once a day) lives at /sargam/daily but is gated behind a "coming soon"
+/// screen — see daily/page.tsx.
 export default function Practice({ user, game: config }: { user: CurrentUser; game: GameDetail }) {
   const [showHelp, setShowHelp] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showAuthGate, setShowAuthGate] = useState(false);
   const [showEraDialog, setShowEraDialog] = useState(false);
-  const [showChallenge, setShowChallenge] = useState(false);
   const [showMultiplayer, setShowMultiplayer] = useState(false);
   const game = useMelodleGame({
     gameSlug: config.slug,
@@ -440,10 +297,7 @@ export default function Practice({ user, game: config }: { user: CurrentUser; ga
   return (
     <div className="page-backdrop min-h-full text-(--text)">
       <div className="mx-auto flex w-full max-w-[760px] flex-col px-4 pb-12 pt-3.5 [@media(max-height:820px)]:pt-2 sm:px-6 sm:pb-16 sm:pt-5">
-        {/* Says "testing" in the one place you always see, so this screen can't
-            be mistaken for the live game — it is the same deck, but the run it
-            starts is PRACTICE and counts for nothing. */}
-        <GameHeader subtitle="Practice · testing">
+        <GameHeader subtitle={config.tagline ?? "Guess the track"}>
           {/* Streak reads from the header row instead of its own band above the
               deck — same reason as the daily page: the game has to clear the
               fold. Tapping it opens the full session stats. */}
@@ -457,7 +311,7 @@ export default function Practice({ user, game: config }: { user: CurrentUser; ga
             user={user}
             items={[
               // Held back for now — listed so players know the mode is coming,
-              // but it does not open the picker. See daily-client.tsx.
+              // but it does not open the picker. See daily/page.tsx.
               {
                 icon: "multiplayer",
                 label: "Multiplayer",
@@ -469,8 +323,10 @@ export default function Practice({ user, game: config }: { user: CurrentUser; ga
                 icon: "daily",
                 label: "Daily challenge",
                 hint: "One set, everyone, today",
-                onClick: () => setShowChallenge(true),
+                badge: "Coming Soon",
+                disabled: true,
               },
+              { icon: "leaderboard", label: "Leaderboard", hint: "Ranked by fast guesses", href: "/leaderboard" },
               { icon: "stats", label: "Stats", hint: "Streak, score, history", onClick: () => setShowStats(true) },
               { icon: "help", label: "How to play", hint: "Rules in ten seconds", onClick: () => setShowHelp(true) },
             ]}
@@ -675,13 +531,6 @@ export default function Practice({ user, game: config }: { user: CurrentUser; ga
             game.setEra(era);
           }}
           onClose={() => setShowEraDialog(false)}
-        />
-      ) : null}
-
-      {showChallenge ? (
-        <TodaysChallengeModal
-          gameSlug={config.slug}
-          onClose={() => setShowChallenge(false)}
         />
       ) : null}
 

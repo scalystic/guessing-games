@@ -68,6 +68,16 @@ function CalendarIcon() {
   );
 }
 
+function LeaderboardIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <path d="M6 3h8v5.5a4 4 0 0 1-8 0V3z" />
+      <path d="M6 4.5H3.5v1.5A3 3 0 0 0 6 9M14 4.5h2.5V6A3 3 0 0 1 14 9" strokeLinecap="round" />
+      <path d="M10 12.5V15M7 17h6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 const ICONS = {
   multiplayer: <MultiplayerIcon />,
   daily: <ChallengeIcon />,
@@ -75,6 +85,7 @@ const ICONS = {
   help: <HelpIcon />,
   home: <HomeIcon />,
   calendar: <CalendarIcon />,
+  leaderboard: <LeaderboardIcon />,
 } as const;
 
 export type GameMenuItem = {

@@ -726,6 +726,10 @@ model PlayerGameStat {
   runsPlayed   Int @default(0)
   roundsPlayed Int @default(0)
   roundsSolved Int @default(0)
+  /// Rounds solved on attempt 1 — the reveal ladder's first stage plays a
+  /// 400ms clip, so this is "guessed in 0.4 seconds". See rollUpPlayerStats
+  /// in src/lib/game/attempt.ts for how it's counted per run.
+  instantSolveCount Int @default(0)
 
   bestRunScore   Int @default(0)
   bestDailyScore Int @default(0)

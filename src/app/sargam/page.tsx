@@ -5,24 +5,25 @@ import { getCurrentUser } from "@/lib/get-current-user";
 import { getActiveGameBySlug } from "@/lib/games";
 import { SARGAM_PAGE, SITE } from "@/lib/site";
 import { breadcrumbNode, videoGameNode } from "@/lib/structured-data";
-import DailyClient from "./daily-client";
+import Practice from "./practice-client";
 
 /// The catalog row behind this route. The URL and the branding are "sargam";
 /// the Game record is still slugged "songless" (see prisma/seed.ts), so the two
 /// deliberately differ — don't "fix" one to match the other.
 const GAME_SLUG = "songless";
 
-/// Sargam is a daily game: this route *is* the daily challenge, and it is the
-/// only mode players can reach. The unlimited practice run still exists — the
-/// engine keeps its PRACTICE mode — but it lives at /sargam/testing/practice
-/// and is noindexed, for our own testing.
+/// Sargam's marketed URL: the unlimited run, any era, as many rounds as you
+/// like. This used to be the daily challenge's spot, with the unlimited run
+/// hidden at /sargam/testing/practice — that's now reversed. The daily
+/// challenge still exists (the engine keeps its DAILY mode) but is gated
+/// behind a "coming soon" screen at /sargam/daily until it ships.
 ///
-/// It used to be the other way round (practice here, daily at /play/daily).
-/// That path now 307s here so already-shared links keep working.
+/// "/" and the retired /play/daily both land here too, so this stays the one
+/// canonical URL for the game.
 ///
-/// force-dynamic because the board depends on who is asking: /api/daily-challenge/today
-/// decides between "play today's set" and "you already played" per session, and
-/// a cached shell would flash the wrong one.
+/// force-dynamic because getCurrentUser() reads the session cookie and the
+/// menu's guest/account state has to match who's actually asking — a cached
+/// shell would show the wrong one.
 export const dynamic = "force-dynamic";
 
 /// The page's copy lives in GAME_PAGES (src/lib/site.ts), not in the Game row
@@ -109,18 +110,13 @@ export default async function Page() {
             maxAttempts: game.maxAttempts,
             revealLadder: game.revealLadder,
           }),
-          // Two crumbs, not one: the trail has to start at the site root for
-          // Google to render it as a trail at all, and "/" is where the brand
-          // name belongs even though it redirects here. No third "Daily
-          // Challenge" crumb any more — the daily is not a sub-page of the
-          // game, it is the game.
           breadcrumbNode([
             { name: SITE.name, path: "/" },
             { name: SARGAM_PAGE.name },
           ]),
         ]}
       />
-      <DailyClient user={user} game={game} />
+      <Practice user={user} game={game} />
     </>
   );
 }

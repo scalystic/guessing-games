@@ -11,17 +11,18 @@ import { absoluteUrl, GAME_PAGES } from "@/lib/site";
 /// *marketed* URLs changes far less often than the catalog behind them. See
 /// the note on GAME_PAGES in src/lib/site.ts.
 ///
-/// Only URLs that return 200 and are meant to be indexed belong here. Four
+/// Only URLs that return 200 and are meant to be indexed belong here. Five
 /// kinds of page are therefore missing on purpose:
 ///
 ///   - "/" — it 307s to /sargam (see src/app/page.tsx). Listing a redirect is
 ///     a sitemap error in Search Console, and the destination is already here.
-///   - /play/daily — also a 307 to /sargam now that the daily challenge *is*
-///     /sargam. It used to be listed in its own right, when it was a second
-///     mode on its own URL.
+///   - /play/daily — 307s to /sargam/daily, a noindex "coming soon" screen.
+///     It used to be listed in its own right, when the daily challenge was
+///     live and lived at /sargam.
 ///   - /login, /signup — noindex; nothing to rank for.
 ///   - /multiplayer/room/[code] — ephemeral, invite-only, noindex.
-///   - /sargam/testing/practice — the internal practice run, noindex.
+///   - /sargam/daily — the daily challenge, held back behind a "coming soon"
+///     screen until it ships; noindex until then, see that route.
 ///   - /games/[slug] — the legacy config view, noindex, and it would compete
 ///     with /sargam for the same game.
 
