@@ -609,6 +609,7 @@ function DailyGame({
               guesses={game.guesses}
               streak={game.streak}
               score={game.score}
+              runRounds={game.roundHistory.slice(0, game.roundsPlayed).reverse()}
               fullAudioUrl={game.revealAudioUrl}
               youtubeVideoId={game.youtubeVideoId}
               audioLoading={game.revealAudioLoading}

@@ -7,6 +7,7 @@ import type { Reveal } from "@/lib/api/runs";
 import { fetchAlbumArtUrl } from "@/lib/album-art";
 import { Confetti } from "@/components/Confetti";
 import { songSubtitleWithYear, songTitle } from "@/lib/song-label";
+import { buildShareText, type ShareRound } from "@/lib/share";
 import {
   loadYouTubeAPI,
   youtubeErrorMessage,
@@ -26,6 +27,10 @@ type Props = {
   guesses: { correct: boolean; skipped: boolean }[];
   streak: number;
   score: number;
+  /// This run's resolved rounds, oldest first, including the one on screen.
+  /// Feeds the run grid in the shared text; omit it and only this round's row
+  /// is shared.
+  runRounds?: readonly ShareRound[];
   fullAudioUrl: string | null;
   /// The round's YouTube video, when it streamed from YouTube rather than from a
   /// stored clip — which, since the server retired stored clips, is every round.
@@ -66,6 +71,7 @@ export function ResultPanel({
   guesses,
   streak,
   score,
+  runRounds,
   fullAudioUrl,
   youtubeVideoId,
   audioLoading,
@@ -73,7 +79,10 @@ export function ResultPanel({
   nextLabel = "Next track",
   progression = null,
 }: Props) {
-  const [copied, setCopied] = useState(false);
+  /// What the share button last did, so its label can say so. "failed" is
+  /// the clipboard refusing (insecure origin, permission denied) — worth
+  /// admitting rather than claiming a copy that didn't happen.
+  const [shareState, setShareState] = useState<"idle" | "copied" | "shared" | "failed">("idle");
   const [isPlaying, setIsPlaying] = useState(false);
   /// Play has been pressed but no audio has reached the speakers yet. A cold
   /// embed takes a moment to load, and a disc that spins in silence reads as a
@@ -341,15 +350,45 @@ export function ResultPanel({
     });
   }
 
-  function share() {
-    const squares = guesses
-      .map((guess) => (guess.correct ? "🟩" : guess.skipped ? "⬛" : "🟥"))
-      .join("");
-    const text = `Sargam ${won ? attemptsUsed || 1 : "X"}/${maxAttempts}\n${squares}`;
-    navigator.clipboard?.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
+  function flashShareState(state: "copied" | "shared" | "failed") {
+    setShareState(state);
+    setTimeout(() => setShareState("idle"), 2200);
+  }
+
+  async function share() {
+    const text = buildShareText({
+      solved: won,
+      attemptsUsed,
+      maxAttempts,
+      revealMs,
+      guesses,
+      runRounds: runRounds ?? [{ solved: won, attemptsUsed }],
+      streak,
     });
+
+    // The native share sheet first: on a phone it is one tap to WhatsApp or
+    // Instagram, which is where these grids actually get posted. Only `text`
+    // is passed — the link is already inside it, and a separate `url` shows
+    // up twice in the apps that keep both.
+    if (typeof navigator.share === "function") {
+      try {
+        await navigator.share({ text });
+        flashShareState("shared");
+        return;
+      } catch (error) {
+        // Dismissing the sheet is a choice, not a failure — don't follow it
+        // with a surprise clipboard write.
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        // Anything else (no user activation, blocked by policy): fall through.
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+      flashShareState("copied");
+    } catch {
+      flashShareState("failed");
+    }
   }
 
   return (
@@ -553,7 +592,13 @@ export function ResultPanel({
             onClick={share}
             className="min-h-12 rounded-[7px] border border-(--hairline) bg-transparent px-3 text-sm font-semibold text-(--text-dim) transition-colors duration-200 hover:bg-(--surface-hover) hover:text-(--text)"
           >
-            {copied ? "Result copied" : "Share result"}
+            {shareState === "copied"
+              ? "Copied, paste anywhere"
+              : shareState === "shared"
+                ? "Shared!"
+                : shareState === "failed"
+                  ? "Couldn't copy"
+                  : "Share result"}
           </button>
           <button
             type="button"

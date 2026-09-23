@@ -473,6 +473,9 @@ export default function Practice({
               guesses={game.guesses}
               streak={game.streak}
               score={game.score}
+              // roundHistory spans the whole visit, newest first; the first
+              // roundsPlayed entries are this run's.
+              runRounds={game.roundHistory.slice(0, game.roundsPlayed).reverse()}
               fullAudioUrl={game.revealAudioUrl}
               youtubeVideoId={game.youtubeVideoId}
               audioLoading={game.revealAudioLoading}
