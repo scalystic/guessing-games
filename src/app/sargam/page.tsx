@@ -4,7 +4,9 @@ import { JsonLd } from "@/components/JsonLd";
 import { getCurrentUser } from "@/lib/get-current-user";
 import { getActiveGameBySlug } from "@/lib/games";
 import { SARGAM_PAGE, SITE } from "@/lib/site";
-import { breadcrumbNode, videoGameNode } from "@/lib/structured-data";
+import { sargamFaq } from "@/lib/sargam-content";
+import { breadcrumbNode, faqPageNode, videoGameNode } from "@/lib/structured-data";
+import { SargamAboutSection } from "./about-section";
 import Practice from "./practice-client";
 
 /// The catalog row behind this route. The URL and the branding are "sargam";
@@ -98,25 +100,30 @@ export default async function Page() {
   // rendered against an undefined reveal ladder.
   if (!game) notFound();
 
+  const rules = { maxAttempts: game.maxAttempts, revealLadder: game.revealLadder };
+
   return (
     <>
       {/* The Organization and WebSite nodes come from the root layout; these
-          two describe this page and reference those by @id. The VideoGame node
-          reads its rules off the row we just loaded rather than restating them,
-          so retuning the ladder in admin updates the markup too. */}
+          describe this page and reference those by @id. The VideoGame and FAQ
+          nodes read their rules off the row we just loaded rather than
+          restating them, so retuning the ladder in admin updates the markup
+          too. The FAQ is the same list SargamAboutSection renders. */}
       <JsonLd
         data={[
-          videoGameNode(SARGAM_PAGE, {
-            maxAttempts: game.maxAttempts,
-            revealLadder: game.revealLadder,
-          }),
+          videoGameNode(SARGAM_PAGE, rules),
+          faqPageNode(PATH, sargamFaq(rules)),
           breadcrumbNode([
             { name: SITE.name, path: "/" },
             { name: SARGAM_PAGE.name },
           ]),
         ]}
       />
-      <Practice user={user} game={game} />
+      {/* Server-rendered and handed to the client board as children, so the
+          copy is in the initial HTML rather than appearing after hydration. */}
+      <Practice user={user} game={game}>
+        <SargamAboutSection rules={rules} />
+      </Practice>
     </>
   );
 }

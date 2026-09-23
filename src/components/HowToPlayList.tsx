@@ -1,11 +1,25 @@
 "use client";
 
-export function HowToPlayList({ maxAttempts }: { maxAttempts: number }) {
+import { formatClipSeconds } from "@/lib/sargam-content";
+
+export function HowToPlayList({
+  maxAttempts,
+  firstClipMs,
+}: {
+  maxAttempts: number;
+  /// First rung of the reveal ladder. Read from the Game row rather than
+  /// hardcoded — the copy used to say 0.2s long after the ladder moved.
+  firstClipMs?: number;
+}) {
   const steps = [
     {
       content: (
         <>
-          Play the mystery clip. The first signal is only <strong className="font-semibold text-(--text)">0.2 seconds</strong>.
+          Play the mystery clip. The first signal is only{" "}
+          <strong className="font-semibold text-(--text)">
+            {firstClipMs === undefined ? "a split second" : formatClipSeconds(firstClipMs)}
+          </strong>
+          .
         </>
       ),
       color: "var(--signal)",

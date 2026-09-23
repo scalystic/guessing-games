@@ -13,12 +13,13 @@
 /// Rule of thumb when adding to this file: never mark up a claim the page
 /// doesn't back up. Google treats structured data that contradicts the visible
 /// page as spam, and the penalty lands on the whole site, not the one page.
-/// That is why there is no FAQPage or HowTo here despite the game having a
-/// "How to play" list — that list lives in a modal that never reaches the
-/// initial HTML, so marking it up would be describing content a crawler can't
-/// see.
+/// That is why the FAQPage node below is built from the same list the
+/// server-rendered "About the game" section on /sargam shows (see
+/// src/lib/sargam-content.ts), and why the "How to play" modal is not marked
+/// up: it never reaches the initial HTML.
 
 import { CONTACTS, OPERATOR } from "@/lib/legal";
+import type { FaqEntry } from "@/lib/sargam-content";
 import { absoluteUrl, GAME_PAGES, SITE, SITE_URL } from "@/lib/site";
 
 /// Stable @id anchors. Fragments on the site's own origin, which is the
@@ -152,9 +153,9 @@ export function videoGameNode(
     gamePlatform: "Web browser",
     operatingSystem: "Any",
     browserRequirements: "Requires JavaScript and HTML5 audio.",
-    // Both are real surfaces: the solo board and the live rooms under
-    // /multiplayer/room.
-    playMode: ["SinglePlayer", "MultiPlayer"],
+    // Solo only for now: multiplayer rooms are behind "Soon" in the game
+    // menu. Add "MultiPlayer" back when they open to players.
+    playMode: ["SinglePlayer"],
     numberOfPlayers: {
       "@type": "QuantitativeValue",
       minValue: 1,
@@ -203,6 +204,25 @@ function describeLadder({
   }
 
   return `A mystery track revealed a fragment at a time: ${seconds(first)} on the first attempt, growing to ${seconds(last)} by attempt ${maxAttempts}.`;
+}
+
+/// A FAQ block, from entries that are also rendered visibly on the page.
+///
+/// Google only shows FAQ rich results for a small set of authoritative sites
+/// now, so this rarely changes how the listing looks. It is still worth
+/// emitting: it states the page's questions and answers in a form every
+/// search engine (and AI answer engine) parses without guessing.
+export function faqPageNode(pagePath: string, entries: readonly FaqEntry[]): JsonLdNode {
+  return {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "@id": `${absoluteUrl(pagePath)}#faq`,
+    mainEntity: entries.map((entry) => ({
+      "@type": "Question",
+      name: entry.question,
+      acceptedAnswer: { "@type": "Answer", text: entry.answer },
+    })),
+  };
 }
 
 /// The trail for a legal document: Cluecade › Legal › <document>.

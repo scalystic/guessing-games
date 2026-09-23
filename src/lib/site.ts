@@ -92,14 +92,19 @@ export const GAME_PAGES = [
     name: "Sargam",
     /// Used verbatim as the <title>, which the root layout's template renders
     /// as "… · Cluecade".
-    headline: "Sargam — Guess the Song in 15 Seconds",
+    /// Leads with the exact phrase the page targets ("song guessing game"),
+    /// then the next-biggest query ("guess the song"). With the " · Cluecade"
+    /// suffix this is ~60 characters, about what Google shows before cutting.
+    headline: "Sargam — Free Song Guessing Game | Guess the Song",
+    /// Under ~160 characters so it isn't truncated. Only claims what ships
+    /// today: the daily challenge and multiplayer rooms are behind "Soon".
     description:
-      "Play Sargam, the fifteen-second song game. Hear a snippet of a mystery track and name it in six attempts — every skip unlocks more of the clip. Free to play in the browser, with a new daily challenge and live multiplayer rooms.",
+      "Sargam is a free song guessing game. Hear a split-second clip of a Bollywood hit and guess the song in six tries. Every miss plays more. No app, no download.",
     ogImage: {
       url: "/og/sargam.png",
       width: 1200,
       height: 630,
-      alt: "Sargam — the fifteen-second song game",
+      alt: "Sargam — a free song guessing game",
     },
     genres: ["Music", "Quiz", "Puzzle"],
     /// Not a ranking factor since ~2009 — Google ignores the keywords meta
@@ -110,6 +115,10 @@ export const GAME_PAGES = [
       "sargam",
       "song guessing game",
       "guess the song",
+      "guess the song game",
+      "bollywood song guessing game",
+      "hindi song guessing game",
+      "heardle alternative",
       "music quiz",
       "song intro quiz",
       "name that tune",

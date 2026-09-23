@@ -167,7 +167,7 @@ function PageShell({
 
       {showHelp && (
         <Modal title="How to play" onClose={onHelpClose}>
-          <HowToPlayList maxAttempts={config.maxAttempts} />
+          <HowToPlayList maxAttempts={config.maxAttempts} firstClipMs={config.revealLadder.at(0)} />
         </Modal>
       )}
 

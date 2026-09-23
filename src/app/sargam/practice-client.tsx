@@ -21,8 +21,7 @@ import { usePlayerStats } from "@/hooks/usePlayerStats";
 import { RoundHistoryList } from "@/components/RoundHistoryList";
 import { MultiplayerEntry } from "@/components/MultiplayerEntry";
 import { RunErrorDialog } from "@/components/RunErrorDialog";
-
-const FREE_GUEST_ROUNDS = 5;
+import { FREE_GUEST_ROUNDS } from "@/lib/sargam-content";
 
 function formatSeconds(milliseconds: number) {
   const seconds = milliseconds / 1000;
@@ -228,7 +227,16 @@ function EraDialog({
 /// primary mode: /sargam renders it directly. The daily challenge (fixed set,
 /// once a day) lives at /sargam/daily but is gated behind a "coming soon"
 /// screen — see daily/page.tsx.
-export default function Practice({ user, game: config }: { user: CurrentUser; game: GameDetail }) {
+export default function Practice({
+  user,
+  game: config,
+  children,
+}: {
+  user: CurrentUser;
+  game: GameDetail;
+  /// Server-rendered copy shown under the board (see about-section.tsx).
+  children?: React.ReactNode;
+}) {
   const [showHelp, setShowHelp] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showAuthGate, setShowAuthGate] = useState(false);
@@ -297,7 +305,10 @@ export default function Practice({ user, game: config }: { user: CurrentUser; ga
   return (
     <div className="page-backdrop min-h-full text-(--text)">
       <div className="mx-auto flex w-full max-w-[760px] flex-col px-4 pb-12 pt-3.5 [@media(max-height:820px)]:pt-2 sm:px-6 sm:pb-16 sm:pt-5">
-        <GameHeader subtitle={config.tagline ?? "Guess the track"}>
+        {/* The page's one <h1>. The subtitle names what the page is — the
+            DB tagline is operational copy and says nothing a search for
+            "song guessing game" would match. */}
+        <GameHeader subtitle="Free song guessing game" asPageHeading>
           {/* Streak reads from the header row instead of its own band above the
               deck — same reason as the daily page: the game has to clear the
               fold. Tapping it opens the full session stats. */}
@@ -368,9 +379,9 @@ export default function Practice({ user, game: config }: { user: CurrentUser; ga
                 />
               ) : null}
             </div>
-            <h1 id="mystery-track-title" className="mt-2 max-w-xl text-balance font-[family-name:var(--font-display)] text-2xl font-semibold leading-[1.05] tracking-[-0.02em] text-(--text) [@media(max-height:820px)]:mt-1 [@media(max-height:820px)]:text-xl sm:text-3xl">
+            <h2 id="mystery-track-title" className="mt-2 max-w-xl text-balance font-[family-name:var(--font-display)] text-2xl font-semibold leading-[1.05] tracking-[-0.02em] text-(--text) [@media(max-height:820px)]:mt-1 [@media(max-height:820px)]:text-xl sm:text-3xl">
               {prompt}
-            </h1>
+            </h2>
           </div>
 
           <PlayerBar
@@ -481,11 +492,13 @@ export default function Practice({ user, game: config }: { user: CurrentUser; ga
           <p>One clip. Six attempts. No rewinds beyond what you unlock.</p>
           <p className="shrink-0 font-mono uppercase tracking-[0.12em]">v1 · Practice · Testing</p>
         </footer>
+
+        {children}
       </div>
 
       {showHelp ? (
         <Modal title="How to play" onClose={() => setShowHelp(false)}>
-          <HowToPlayList maxAttempts={game.maxAttempts} />
+          <HowToPlayList maxAttempts={game.maxAttempts} firstClipMs={config.revealLadder.at(0)} />
         </Modal>
       ) : null}
 
